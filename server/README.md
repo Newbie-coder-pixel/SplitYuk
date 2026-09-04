@@ -15,7 +15,7 @@ Reads a receipt photo with Google Gemini and returns structured items/total — 
 
 Returns `200` with `{"isReceipt": bool, "reason"?: string, "items": [{"name": string, "price": number}], "detectedTotal"?: number}`, or `4xx/5xx {"error": "..."}`.
 
-**Not yet verified against a live Gemini call** — `lib/gemini.ts` was written against Gemini's documented "Interactions API" without a `GEMINI_API_KEY` available to test with. The code defends against getting a field name wrong (tries several response shapes, validates before trusting), but treat the first real call as the actual verification step; check `vercel logs` if it errors with "Unexpected response shape from Gemini".
+Verified against the live API on 2026-09-04. The call proved unreliable rather than wrong, so `lib/gemini.ts` retries with backoff across a runtime-resolved model chain, times each attempt out, and extracts the result by searching the response for a valid receipt object rather than trusting one field name. Model ids are not pinned: `GEMINI_MODEL` (one id, or a comma-separated preference list) overrides, otherwise the API's own `/v1beta/models` listing is consulted at runtime.
 
 ### `POST /api/notify` — multipart/form-data
 

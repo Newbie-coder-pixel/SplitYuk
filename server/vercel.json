@@ -2,6 +2,9 @@
   "functions": {
     "api/notify.ts": {
       "maxDuration": 15
+    },
+    "api/parse-receipt.ts": {
+      "maxDuration": 60
     }
   }
 }
