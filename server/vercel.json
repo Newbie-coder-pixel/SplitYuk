@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/notify.ts": {
+      "maxDuration": 15
+    }
+  }
+}
