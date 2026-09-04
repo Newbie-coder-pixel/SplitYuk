@@ -7,6 +7,7 @@ import '../../core/theme/app_typography.dart';
 import '../../core/widgets/app_buttons.dart';
 import '../../core/widgets/app_scaffold.dart';
 import '../../logic/receipt_parser.dart';
+import '../../logic/receipt_validator.dart';
 import '../../services/ocr_service.dart';
 import '../create/manual_entry_screen.dart';
 import 'review_scanned_screen.dart';
@@ -49,6 +50,16 @@ class _ScanReceiptScreenState extends State<ScanReceiptScreen> {
       }
       final rawText = await _ocrService.recognizeText(photo.path);
       final parsed = ReceiptParser.parse(rawText);
+      final validation = ReceiptValidator.validate(rawText, parsed);
+
+      if (!validation.isValid) {
+        if (!mounted) return;
+        setState(() {
+          _isProcessing = false;
+          _error = validation.reason;
+        });
+        return;
+      }
 
       if (!mounted) return;
       Navigator.of(context).pushReplacement(

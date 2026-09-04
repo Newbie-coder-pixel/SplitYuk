@@ -26,6 +26,12 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>SplitYuk needs camera access to scan a physical receipt. The photo is processed on your device and is never uploaded anywhere.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>SplitYuk needs access to your photos so you can pick an existing photo of a receipt to scan.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>SplitYuk can read your contacts so you can pick who's splitting this bill without typing numbers by hand. Nothing is uploaded or saved.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
