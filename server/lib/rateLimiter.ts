@@ -30,24 +30,38 @@ function getRedis(): Redis | null {
   return redis;
 }
 
-/** Returns true if this installation is still within its rate limit. */
-export async function checkRateLimit(installationToken: string): Promise<boolean> {
+/**
+ * Returns true if this installation is still within its rate limit for
+ * [action]. Each action gets its own counter (e.g. "notify" vs "parse-
+ * receipt") so a burst of one kind of request can't eat another's quota —
+ * this matters especially for AI receipt parsing, which shares one Gemini
+ * free-tier daily quota across every installation using this relay.
+ */
+export async function checkRateLimit(
+  installationToken: string,
+  action: string,
+  maxPerWindow: number = MAX_REQUESTS_PER_WINDOW,
+): Promise<boolean> {
   const client = getRedis();
   if (!client) return true;
   try {
-    const key = `ratelimit:${installationToken}`;
+    const key = `ratelimit:${action}:${installationToken}`;
     const count = await client.incr(key);
     if (count === 1) {
       await client.expire(key, WINDOW_SECONDS);
     }
-    return count <= MAX_REQUESTS_PER_WINDOW;
+    return count <= maxPerWindow;
   } catch (err) {
     console.warn("Rate-limit check failed, allowing the request through:", err);
     return true;
   }
 }
 
-export type MetricName = "notifications_sent_total" | "notifications_failed_total";
+export type MetricName =
+  | "notifications_sent_total"
+  | "notifications_failed_total"
+  | "receipts_parsed_total"
+  | "receipts_parse_failed_total";
 
 /** Increments a simple, anonymous aggregate counter — never tied to a bill or person. */
 export async function incrementMetric(name: MetricName): Promise<void> {

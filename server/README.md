@@ -1,10 +1,23 @@
 # SplitYuk relay
 
-Stateless backend for the SplitYuk app (see `/PRD_SplitBill_App_v3.md` §13). Its only job is to hold the Fonnte/Resend API keys server-side and forward one notification request at a time — it never logs, caches, or stores bill content, contacts, phone numbers, or attachments (§12).
+Stateless backend for the SplitYuk app (see `/PRD_SplitBill_App_v3.md` §13). Its job is to hold the Fonnte/Resend/Gemini API keys server-side and forward one request at a time — it never logs, caches, or stores bill content, contacts, phone numbers, or images (§12). Live at `https://splityuk-relay.vercel.app`.
 
-## Endpoint
+## Endpoints
 
-`POST /api/notify` — multipart/form-data:
+### `POST /api/parse-receipt` — multipart/form-data
+
+Reads a receipt photo with Google Gemini and returns structured items/total — see `/CLAUDE.md`'s privacy-deviation note for why the photo goes here instead of staying fully on-device.
+
+| Field | Required | Notes |
+|---|---|---|
+| `installationToken` | yes | Same token used for `/api/notify`; rate-limited separately (10/hour) since this shares one Gemini free-tier daily quota across every installation. |
+| `image` | yes | The receipt photo, forwarded to Gemini as raw bytes. |
+
+Returns `200` with `{"isReceipt": bool, "reason"?: string, "items": [{"name": string, "price": number}], "detectedTotal"?: number}`, or `4xx/5xx {"error": "..."}`.
+
+**Not yet verified against a live Gemini call** — `lib/gemini.ts` was written against Gemini's documented "Interactions API" without a `GEMINI_API_KEY` available to test with. The code defends against getting a field name wrong (tries several response shapes, validates before trusting), but treat the first real call as the actual verification step; check `vercel logs` if it errors with "Unexpected response shape from Gemini".
+
+### `POST /api/notify` — multipart/form-data
 
 | Field | Required | Notes |
 |---|---|---|
@@ -28,10 +41,10 @@ npm run typecheck
 vercel dev                    # or: vercel deploy
 ```
 
-Needs a Fonnte account (WhatsApp), a Resend account + verified sending domain (email fallback), and an Upstash Redis database (rate-limit counter + anonymized delivery metrics only — see `lib/rateLimiter.ts`).
+Needs a Fonnte account (WhatsApp), a Resend account + verified sending domain (email fallback), a Google AI Studio API key (Gemini, free tier — [aistudio.google.com/apikey](https://aistudio.google.com/apikey)), and an Upstash Redis database (rate-limit counters + anonymized delivery metrics only — see `lib/rateLimiter.ts`). All are optional at deploy time; each missing key degrades only its own endpoint with a clear "not configured" error rather than breaking the relay.
 
 ## Known limitations, carried over from the PRD
 
 - **§15's single-shared-Fonnte-number risk is not addressed here.** Every deployment of this relay sends WhatsApp messages from whichever one number is linked to `FONNTE_API_KEY`. At real scale this is very likely to get that number rate-limited or banned by WhatsApp, and looks suspicious to recipients. The PRD flags this as the most serious open risk in the whole product and calls for a dedicated design pass (e.g. per-installation Fonnte device linking, or migrating to the official WhatsApp Cloud API) before this ships to real users.
 - The Fonnte integration in `lib/fonnte.ts` was written against Fonnte's publicly documented `/send` endpoint (multipart `target`/`message`/`file` fields) but has not been exercised against a live Fonnte account — verify against your account's actual behavior before relying on it.
-- No deployment, API keys, or infrastructure are provisioned as part of this repo — this is scaffolding only.
+- The relay itself is deployed (Vercel project `splityuk-relay`); the third-party API keys it needs (Fonnte/Resend/Gemini/Upstash) are not provisioned yet.

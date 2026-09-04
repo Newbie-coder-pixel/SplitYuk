@@ -8,11 +8,21 @@ import '../../core/widgets/app_buttons.dart';
 import '../../core/widgets/app_scaffold.dart';
 import '../../logic/receipt_parser.dart';
 import '../../logic/receipt_validator.dart';
+import '../../services/ai_receipt_service.dart';
 import '../../services/ocr_service.dart';
 import '../create/manual_entry_screen.dart';
 import 'review_scanned_screen.dart';
 
-/// FR-2.1/FR-2.2: capture or pick a receipt photo, then run on-device OCR.
+/// FR-2.1/FR-2.2: capture or pick a receipt photo, then read it.
+///
+/// Reading is AI-first: the photo is sent to the backend relay's
+/// `/api/parse-receipt`, which has Gemini read it directly — this is a
+/// deliberate product decision (confirmed 2026-09-04) trading the "OCR
+/// never leaves the device" property for materially better accuracy, since
+/// on-device OCR mistakes can't be recovered by anything downstream. If
+/// the relay isn't configured/reachable, this falls back to the on-device
+/// ML Kit OCR + regex parser so scanning still works without a network
+/// connection, just less precisely.
 ///
 /// Uses `image_picker` rather than a custom live camera view — it covers
 /// "take a photo directly or pick one from the gallery" with far less
@@ -28,6 +38,9 @@ class ScanReceiptScreen extends StatefulWidget {
 class _ScanReceiptScreenState extends State<ScanReceiptScreen> {
   final ImagePicker _picker = ImagePicker();
   final OcrService _ocrService = OcrService();
+  final AiReceiptService _aiReceiptService = AiReceiptService(
+    relayBaseUrl: const String.fromEnvironment('SPLITYUK_RELAY_URL'),
+  );
   bool _isProcessing = false;
   String? _error;
 
@@ -48,15 +61,42 @@ class _ScanReceiptScreenState extends State<ScanReceiptScreen> {
         setState(() => _isProcessing = false);
         return;
       }
-      final rawText = await _ocrService.recognizeText(photo.path);
-      final parsed = ReceiptParser.parse(rawText);
-      final validation = ReceiptValidator.validate(rawText, parsed);
 
-      if (!validation.isValid) {
+      ParsedReceipt? parsed;
+
+      final aiOutcome = await _aiReceiptService.parseReceipt(photo.path);
+      if (aiOutcome.succeeded) {
+        if (!aiOutcome.isReceipt) {
+          if (!mounted) return;
+          setState(() {
+            _isProcessing = false;
+            _error = aiOutcome.reason;
+          });
+          return;
+        }
+        parsed = aiOutcome.parsed;
+      } else {
+        // AI relay unreachable/not configured — fall back to on-device OCR
+        // rather than blocking the scan entirely.
+        final rawText = await _ocrService.recognizeText(photo.path);
+        final localParsed = ReceiptParser.parse(rawText);
+        final validation = ReceiptValidator.validate(rawText, localParsed);
+        if (!validation.isValid) {
+          if (!mounted) return;
+          setState(() {
+            _isProcessing = false;
+            _error = validation.reason;
+          });
+          return;
+        }
+        parsed = localParsed;
+      }
+
+      if (parsed == null || parsed.items.isEmpty) {
         if (!mounted) return;
         setState(() {
           _isProcessing = false;
-          _error = validation.reason;
+          _error = "This doesn't look like a receipt. Try again with a clearer photo of your bill.";
         });
         return;
       }
@@ -66,7 +106,7 @@ class _ScanReceiptScreenState extends State<ScanReceiptScreen> {
         MaterialPageRoute(
           builder: (_) => ReviewScannedScreen(
             imagePath: photo.path,
-            parsed: parsed,
+            parsed: parsed!,
           ),
         ),
       );
@@ -91,8 +131,9 @@ class _ScanReceiptScreenState extends State<ScanReceiptScreen> {
             const Text('Scan your receipt', style: AppTypography.sectionHeading),
             const SizedBox(height: AppSpacing.xs),
             const Text(
-              'Make sure the receipt is flat and well-lit. This never leaves '
-              'your device except as a message attachment later on.',
+              'Make sure the receipt is flat and well-lit. Read by AI for the '
+              'most accurate result — the photo is sent to our relay for '
+              'reading only, never stored.',
               style: AppTypography.bodySecondary,
             ),
             const SizedBox(height: AppSpacing.xxl),

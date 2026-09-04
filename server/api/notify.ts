@@ -47,7 +47,7 @@ export async function POST(req: Request): Promise<Response> {
     return jsonResponse(400, { error: "amountDue must be a non-negative integer." });
   }
 
-  const withinLimit = await checkRateLimit(installationToken);
+  const withinLimit = await checkRateLimit(installationToken, "notify");
   if (!withinLimit) {
     return jsonResponse(429, { error: "Rate limit exceeded for this installation." });
   }
