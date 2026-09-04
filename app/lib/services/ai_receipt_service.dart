@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../core/utils/id_generator.dart';
+import '../core/utils/image_mime_type.dart';
 import '../core/utils/installation_id.dart';
 import '../logic/receipt_parser.dart';
 import '../models/bill_item.dart';
@@ -48,7 +49,13 @@ class AiReceiptService {
       final uri = Uri.parse('${relayBaseUrl!}/api/parse-receipt');
       final request = http.MultipartRequest('POST', uri)
         ..fields['installationToken'] = token
-        ..files.add(await http.MultipartFile.fromPath('image', imagePath));
+        ..files.add(await http.MultipartFile.fromPath(
+          'image',
+          imagePath,
+          // Without this the part is sent as application/octet-stream and
+          // Gemini refuses it as raw binary instead of reading the receipt.
+          contentType: ImageMimeType.forPath(imagePath),
+        ));
 
       final streamedResponse = await request.send();
       final response = await http.Response.fromStream(streamedResponse);

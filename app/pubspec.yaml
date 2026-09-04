@@ -39,6 +39,9 @@ dependencies:
   image_picker: ^1.2.3
   permission_handler: ^13.0.1
   http: ^1.6.0
+  # Only for MediaType, to declare an upload's real content type — see
+  # core/utils/image_mime_type.dart for why that isn't optional.
+  http_parser: ^4.1.2
   share_plus: ^13.3.0
   path_provider: ^2.1.6
   flutter_contacts: ^2.3.1

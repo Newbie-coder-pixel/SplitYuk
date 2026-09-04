@@ -1,5 +1,5 @@
 import { checkRateLimit, incrementMetric } from "../lib/rateLimiter.js";
-import { parseReceiptWithGemini } from "../lib/gemini.js";
+import { parseReceiptWithGemini, resolveImageMimeType } from "../lib/gemini.js";
 
 // A tighter, separate quota than /api/notify — this shares one Gemini
 // free-tier daily allowance across every installation using this relay,
@@ -37,7 +37,16 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const imageBytes = await imageEntry.arrayBuffer();
-  const mimeType = imageEntry.type || "image/jpeg";
+
+  // Decided from the bytes, not from what the client claimed: an upload
+  // with no declared type arrives as application/octet-stream, and passing
+  // that on makes Gemini reject the photo as raw binary.
+  const mimeType = resolveImageMimeType(imageBytes, imageEntry.type);
+  if (!mimeType) {
+    return jsonResponse(400, {
+      error: "That file isn't a photo we can read. Take the receipt photo again and retry.",
+    });
+  }
 
   const result = await parseReceiptWithGemini(imageBytes, mimeType);
 

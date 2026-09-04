@@ -28,7 +28,16 @@ const MODELS_ENDPOINT = `${GEMINI_BASE}/models`;
 const FALLBACK_MODEL = "gemini-3.8-flash";
 
 /** Per-attempt ceiling. Without one, a stalled call hangs the function. */
-const REQUEST_TIMEOUT_MS = 25_000;
+const REQUEST_TIMEOUT_MS = 18_000;
+
+/**
+ * Ceiling across *all* attempts, kept under the function's maxDuration
+ * (see vercel.json). Retrying across several models can otherwise outlive
+ * the invocation itself, and the platform then kills it with an opaque
+ * FUNCTION_INVOCATION_TIMEOUT instead of the app getting a real error it
+ * can fall back from. Observed for real before this bound existed.
+ */
+const TOTAL_BUDGET_MS = 45_000;
 
 /** Attempts per model before moving on to the next candidate. */
 const ATTEMPTS_PER_MODEL = 2;
@@ -77,6 +86,57 @@ const PROMPT =
   "visible, extract it as detectedTotal as a plain integer. Respond with " +
   "only the structured JSON, nothing else.";
 
+const SUPPORTED_IMAGE_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "image/heif",
+  "image/gif",
+]);
+
+/**
+ * The image type to tell Gemini, decided from the bytes themselves rather
+ * than from what the caller claimed.
+ *
+ * A client that uploads a photo without setting a content type sends
+ * `application/octet-stream`, and forwarding that verbatim made Gemini
+ * reject a perfectly good receipt as "corrupted/raw binary file text
+ * instead of a valid receipt image" — a real bug that reached a user's
+ * phone. The declared type is only consulted when the bytes are
+ * inconclusive, so an old app build can't break reading again.
+ *
+ * Returns undefined when the upload isn't an image Gemini can read, which
+ * the caller should reject before spending a Gemini call on it.
+ */
+export function resolveImageMimeType(bytes: ArrayBuffer, declared?: string): string | undefined {
+  const sniffed = sniffImageMimeType(bytes);
+  if (sniffed) return sniffed;
+
+  const normalized = declared?.split(";")[0]?.trim().toLowerCase();
+  return normalized && SUPPORTED_IMAGE_TYPES.has(normalized) ? normalized : undefined;
+}
+
+function sniffImageMimeType(buffer: ArrayBuffer): string | undefined {
+  const bytes = new Uint8Array(buffer);
+  if (bytes.length < 12) return undefined;
+
+  const ascii = (offset: number, length: number) =>
+    String.fromCharCode(...bytes.subarray(offset, offset + length));
+
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes[0] === 0x89 && ascii(1, 3) === "PNG") return "image/png";
+  if (ascii(0, 4) === "RIFF" && ascii(8, 4) === "WEBP") return "image/webp";
+  if (ascii(0, 3) === "GIF") return "image/gif";
+  // ISO base media container: HEIC/HEIF photos straight from an iPhone.
+  if (ascii(4, 4) === "ftyp") {
+    const brand = ascii(8, 4);
+    if (/^(heic|heix|hevc|hevx|mif1|msf1|heim|heis|hevm|hevs)$/.test(brand)) return "image/heic";
+  }
+
+  return undefined;
+}
+
 /**
  * Sends the receipt photo itself (not pre-extracted OCR text) to Gemini so
  * it reads the image directly — this intentionally replaces on-device OCR
@@ -101,14 +161,20 @@ export async function parseReceiptWithGemini(
     return { ok: false, error: "GEMINI_API_KEY is not configured on the relay." };
   }
 
+  const deadline = Date.now() + TOTAL_BUDGET_MS;
   const base64 = Buffer.from(imageBytes).toString("base64");
-  const models = await resolveModels(apiKey);
+  const models = await resolveModels(apiKey, deadline);
 
   let lastError = "Gemini could not be reached.";
 
   for (const model of models) {
     for (let attempt = 0; attempt < ATTEMPTS_PER_MODEL; attempt++) {
-      const outcome = await callOnce(apiKey, model, base64, mimeType);
+      const remaining = deadline - Date.now();
+      // Not enough time left for a meaningful attempt — stop and report,
+      // rather than being killed mid-call with no answer at all.
+      if (remaining < 4_000) return { ok: false, error: lastError };
+
+      const outcome = await callOnce(apiKey, model, base64, mimeType, remaining);
       if (outcome.ok) return outcome;
 
       lastError = outcome.error ?? lastError;
@@ -131,6 +197,7 @@ async function callOnce(
   model: string,
   base64: string,
   mimeType: string,
+  budgetMs: number,
 ): Promise<AttemptOutcome> {
   const requestBody = {
     model,
@@ -154,7 +221,7 @@ async function callOnce(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(Math.min(REQUEST_TIMEOUT_MS, budgetMs)),
     });
   } catch {
     // Includes the abort: a stalled call is worth retrying, and must never
@@ -196,7 +263,7 @@ async function callOnce(
  */
 let cachedModels: string[] | undefined;
 
-async function resolveModels(apiKey: string): Promise<string[]> {
+async function resolveModels(apiKey: string, deadline: number): Promise<string[]> {
   const configured = process.env.GEMINI_MODEL?.trim();
   if (configured) {
     return configured.split(",").map((m) => m.trim()).filter(Boolean);
@@ -204,17 +271,21 @@ async function resolveModels(apiKey: string): Promise<string[]> {
 
   if (cachedModels) return cachedModels;
 
-  const discovered = await listModels(apiKey);
+  const discovered = await listModels(apiKey, deadline);
   cachedModels = discovered.length > 0 ? discovered : [FALLBACK_MODEL];
   return cachedModels;
 }
 
-async function listModels(apiKey: string): Promise<string[]> {
+async function listModels(apiKey: string, deadline: number): Promise<string[]> {
+  // Discovery must never eat the budget the actual read needs.
+  const budget = Math.min(6_000, deadline - Date.now() - 20_000);
+  if (budget <= 0) return [];
+
   let response: Response;
   try {
     response = await fetch(MODELS_ENDPOINT, {
       headers: { "x-goog-api-key": apiKey },
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(budget),
     });
   } catch {
     return [];

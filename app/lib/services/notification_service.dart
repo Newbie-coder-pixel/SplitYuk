@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
+import '../core/utils/image_mime_type.dart';
 import '../core/utils/installation_id.dart';
 import '../models/member.dart';
 
@@ -75,7 +76,14 @@ class NotificationService {
       if (attachmentImagePath != null) {
         final file = File(attachmentImagePath);
         if (await file.exists()) {
-          request.files.add(await http.MultipartFile.fromPath('attachment', attachmentImagePath));
+          request.files.add(await http.MultipartFile.fromPath(
+            'attachment',
+            attachmentImagePath,
+            // Same reason as the receipt upload: an attachment sent as
+            // application/octet-stream is at the mercy of whatever the
+            // WhatsApp/email provider guesses it is.
+            contentType: ImageMimeType.forPath(attachmentImagePath),
+          ));
         }
       }
 
