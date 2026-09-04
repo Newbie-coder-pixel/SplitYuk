@@ -1,0 +1,47 @@
+name: Build unsigned iOS IPA
+
+# Builds an unsigned iOS .ipa on GitHub's macOS runner — which already has
+# Xcode preinstalled — so nothing needs to be downloaded on your own Mac.
+# The resulting .ipa is meant to be signed and installed locally with
+# Sideloadly (or AltStore) using a free Apple ID, entirely without Xcode.
+#
+# Trigger manually from the Actions tab ("Run workflow"), or it also runs
+# automatically whenever app/ changes on main.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+
+jobs:
+  build:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.1"
+          channel: stable
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build unsigned iOS app
+        run: flutter build ios --release --no-codesign
+
+      - name: Package as .ipa
+        run: |
+          mkdir -p Payload
+          cp -r build/ios/iphoneos/Runner.app Payload/
+          zip -r SplitYuk-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SplitYuk-unsigned-ipa
+          path: app/SplitYuk-unsigned.ipa
+          retention-days: 14
