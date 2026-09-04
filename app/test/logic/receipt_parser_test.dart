@@ -1,7 +1,141 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:splityuk_app/logic/receipt_parser.dart';
 
+/// The item name/price pairs a parse produced, as a plain map — the shape
+/// these format tests actually care about.
+Map<String, int> itemsOf(String text) {
+  return {for (final item in ReceiptParser.parse(text).items) item.name: item.price};
+}
+
 void main() {
+  // Every receipt layout below came from a different real-world POS
+  // convention. They are the regression net for the thing that makes this
+  // parser worth having at all: it must not be tuned to one shop's format.
+  group('ReceiptParser — across differing receipt formats', () {
+    test('warung: quantity printed in front of the name', () {
+      const text = 'Warung Bu Ani\n'
+          '2 Nasi Goreng          40.000\n'
+          '1 Es Teh Manis          8.000\n'
+          'Total                  48.000';
+
+      expect(itemsOf(text), {'Nasi Goreng': 40000, 'Es Teh Manis': 8000});
+      expect(ReceiptParser.parse(text).detectedTotal, 48000);
+    });
+
+    test('restaurant: unit price x quantity alongside a line total', () {
+      const text = 'Nasi Goreng    2 x 25.000    50.000\n'
+          'Es Teh         3 x  6.000    18.000';
+
+      expect(itemsOf(text), {'Nasi Goreng': 50000, 'Es Teh': 18000});
+    });
+
+    test('restaurant: unit price x quantity with no line total column', () {
+      // The line's real cost is the multiplication — reading the unit
+      // price as the price would undercharge everyone at the table.
+      const text = 'Nasi Goreng    2 x 25.000\nEs Teh         3 x 6.000';
+
+      expect(itemsOf(text), {'Nasi Goreng': 50000, 'Es Teh': 18000});
+    });
+
+    test('quantity glued to the multiplier ("2x Nasi Goreng")', () {
+      const text = '2x Nasi Goreng          50.000\n1x Es Jeruk              8.000';
+
+      expect(itemsOf(text), {'Nasi Goreng': 50000, 'Es Jeruk': 8000});
+    });
+
+    test('unit price glued to the marker ("2 @25.000")', () {
+      const text = 'Ayam Geprek     2 @25.000     50.000\nTeh Botol       1 @5.000       5.000';
+
+      expect(itemsOf(text), {'Ayam Geprek': 50000, 'Teh Botol': 5000});
+    });
+
+    test('unit price and line total in adjacent columns, no marker', () {
+      const text = 'Nasi Goreng      2    25.000    50.000\nEs Teh           3     6.000    18.000';
+
+      expect(itemsOf(text), {'Nasi Goreng': 50000, 'Es Teh': 18000});
+    });
+
+    test('minimarket: description above, "qty x unit  total" below', () {
+      const text = 'INDOMIE GORENG\n'
+          '  3 x 3.500              10.500\n'
+          'AQUA 600ML\n'
+          '  2 x 4.000               8.000';
+
+      expect(itemsOf(text), {'INDOMIE GORENG': 10500, 'AQUA 600ML': 8000});
+    });
+
+    test('cafe: quantity in a left-hand column', () {
+      const text = 'QTY ITEM              AMOUNT\n'
+          '1   Americano         25.000\n'
+          '2   Croissant         36.000';
+
+      expect(itemsOf(text), {'Americano': 25000, 'Croissant': 36000});
+    });
+
+    test('amounts marked with Rp, attached or detached', () {
+      const text = 'Ayam Bakar        Rp25.000\nNasi Putih        Rp 6.000\nTOTAL             Rp31.000';
+
+      expect(itemsOf(text), {'Ayam Bakar': 25000, 'Nasi Putih': 6000});
+      expect(ReceiptParser.parse(text).detectedTotal, 31000);
+    });
+
+    test('amounts with the Indonesian ",-" suffix', () {
+      const text = 'Kopi Susu         18.000,-\nRoti Bakar        22.000,-\nTotal             40.000,-';
+
+      expect(itemsOf(text), {'Kopi Susu': 18000, 'Roti Bakar': 22000});
+      expect(ReceiptParser.parse(text).detectedTotal, 40000);
+    });
+
+    test('menu-style dotted leaders between name and price', () {
+      const text = 'Mie Ayam .............. 20.000\nPangsit ............... 10.000';
+
+      expect(itemsOf(text), {'Mie Ayam': 20000, 'Pangsit': 10000});
+    });
+
+    test('numbered menu lines', () {
+      const text = '1. Nasi Goreng          25.000\n2. Ayam Bakar           35.000';
+
+      expect(itemsOf(text), {'Nasi Goreng': 25000, 'Ayam Bakar': 35000});
+    });
+
+    test('names containing their own digits are not mistaken for prices', () {
+      const text = 'Coca Cola 330ml        15.000\n7UP Kaleng             14.000';
+
+      expect(itemsOf(text), {'Coca Cola 330ml': 15000, '7UP Kaleng': 14000});
+    });
+
+    test('prices printed without a thousands separator', () {
+      const text = 'Gorengan                 5000\nTeh Anget                3000\nJumlah                   8000';
+
+      expect(itemsOf(text), {'Gorengan': 5000, 'Teh Anget': 3000});
+      expect(ReceiptParser.parse(text).detectedTotal, 8000);
+    });
+
+    test('English-language invoice with an "Amount Due" total', () {
+      const text = 'DESCRIPTION            AMOUNT\n'
+          'Grilled Chicken        85.000\n'
+          'Caesar Salad           65.000\n'
+          'Amount Due            150.000';
+
+      expect(itemsOf(text), {'Grilled Chicken': 85000, 'Caesar Salad': 65000});
+      expect(ReceiptParser.parse(text).detectedTotal, 150000);
+    });
+
+    test('a per-item discount line is not counted as an item', () {
+      const text = 'Kopi Susu               25.000\n'
+          '  Diskon Member         -5.000\n'
+          'Roti Bakar              22.000';
+
+      expect(itemsOf(text), {'Kopi Susu': 25000, 'Roti Bakar': 22000});
+    });
+
+    test('total written in caps with a colon', () {
+      const text = 'Bakso Urat              30.000\nTOTAL:                  30.000';
+
+      expect(ReceiptParser.parse(text).detectedTotal, 30000);
+    });
+  });
+
   group('ReceiptParser', () {
     test('extracts line items with grouped thousands amounts', () {
       const text = 'Nasi Goreng Spesial 56.000\nEs Teh Manis 18.000';
