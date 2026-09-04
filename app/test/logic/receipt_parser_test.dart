@@ -104,6 +104,82 @@ void main() {
       expect(result.items, isEmpty);
     });
 
+    test('splits items when OCR merges a code row with the next description', () {
+      // The layout that broke the old parser: OCR joined each amount row
+      // with the following product's name, so no line ended in a price and
+      // every item but one was lost.
+      const text = 'Paper Bag Red S\n'
+          '20154549101003000 1 3000 Flower Language Series Succulent\n'
+          '20130911110239900 1 39900 MIKKO Collection Ankle Socks (1\n'
+          '20162055101052900 1 29900';
+      final result = ReceiptParser.parse(text);
+
+      expect(result.items.map((i) => i.name), [
+        'Paper Bag Red S',
+        'Flower Language Series Succulent',
+        'MIKKO Collection Ankle Socks (1',
+      ]);
+      expect(result.items.map((i) => i.price), [3000, 39900, 29900]);
+    });
+
+    test('handles an item whose code, qty and amount are split across lines', () {
+      const text = 'Harry Potter Plastic Tumbler wit\n'
+          '20184457101091799001\n'
+          '1\n'
+          '179900';
+      final result = ReceiptParser.parse(text);
+
+      expect(result.items, hasLength(1));
+      expect(result.items.single.name, 'Harry Potter Plastic Tumbler wit');
+      expect(result.items.single.price, 179900);
+    });
+
+    test('never reads a goods code or a quantity as the price', () {
+      const text = 'Cinnamoroll Lotion Bottle 45ml\n20153632101017900    1    17900';
+      final result = ReceiptParser.parse(text);
+
+      expect(result.items.single.price, 17900);
+    });
+
+    test('drops a coded line whose amount column did not survive OCR', () {
+      const text = 'Paper Bag Red S\n20154549101003000    1';
+      final result = ReceiptParser.parse(text);
+
+      expect(result.items, isEmpty);
+    });
+
+    test('keeps a coded, priced line that lost its description', () {
+      // Losing the name is recoverable on the review screen; silently
+      // dropping the money is not.
+      const text = '20154549101003000    1    3000';
+      final result = ReceiptParser.parse(text);
+
+      expect(result.items, hasLength(1));
+      expect(result.items.single.price, 3000);
+    });
+
+    test('takes only the last line of stacked text as an item name', () {
+      const text = 'Toko Serba Ada\nJl. Sabang No. 14\nPaper Bag Red S\n'
+          '20154549101003000    1    3000';
+      final result = ReceiptParser.parse(text);
+
+      expect(result.items.single.name, 'Paper Bag Red S');
+    });
+
+    test('reads a total whose amount landed on the next line', () {
+      const text = 'Item A\n1000000    1    50000\nTOTAL\n260940.00';
+      final result = ReceiptParser.parse(text);
+
+      expect(result.detectedTotal, 260940);
+    });
+
+    test('does not treat an item-count line as the total', () {
+      const text = 'Kerupuk 4.000\nTotal Item 8\nTotal 4.000';
+      final result = ReceiptParser.parse(text);
+
+      expect(result.detectedTotal, 4000);
+    });
+
     test(
       'end-to-end: the exact receipt that previously produced garbage items',
       () {
