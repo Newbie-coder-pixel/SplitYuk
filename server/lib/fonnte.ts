@@ -19,8 +19,13 @@ export async function sendWhatsApp(params: {
     return { ok: false, error: "FONNTE_API_KEY is not configured on the relay." };
   }
 
+  const target = normalizePhone(params.phone);
+  if (!target) {
+    return { ok: false, error: `"${params.phone}" is not a usable WhatsApp number.` };
+  }
+
   const form = new FormData();
-  form.set("target", params.phone);
+  form.set("target", target);
   form.set("message", params.message);
   if (params.attachment) {
     form.set(
@@ -45,9 +50,49 @@ export async function sendWhatsApp(params: {
     return { ok: false, error: `Fonnte returned HTTP ${response.status}.` };
   }
 
-  const data = (await response.json().catch(() => null)) as { status?: boolean } | null;
+  const data = (await response.json().catch(() => null)) as
+    | { status?: boolean; reason?: string }
+    | null;
   if (data?.status === false) {
-    return { ok: false, error: "Fonnte reported the message was not sent." };
+    // Fonnte's own explanation ("device not connected", "invalid target",
+    // quota) is the only way to tell those apart from the outside, and it
+    // names no one — it is about the sending device, not the recipient.
+    const reason = typeof data.reason === "string" && data.reason ? ` ${data.reason}` : "";
+    return { ok: false, error: `Fonnte did not send the message.${reason}` };
   }
   return { ok: true };
+}
+
+/**
+ * A phone number in the form Fonnte's `target` expects: digits only, with
+ * an international dialling code and no leading `+`.
+ *
+ * Numbers reach this relay exactly as they were typed or as the phone's
+ * address book formatted them — "+62 819-3303-2412", "0819 3303 2412",
+ * "(0819) 3303-2412". Fonnte silently refuses those, which surfaces to the
+ * user as an unexplained delivery failure, so the cleaning happens here
+ * rather than trusting every app build to have done it.
+ *
+ * A local Indonesian leading zero becomes 62, matching the product's
+ * market (PRD §1). Any other number that already carries a country code is
+ * passed through — this must not mangle a foreign number into an
+ * Indonesian one.
+ *
+ * Returns undefined when there is no plausible number to send to.
+ */
+export function normalizePhone(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  const hadPlus = trimmed.startsWith("+");
+  const digits = trimmed.replace(/\D/g, "");
+  if (!digits) return undefined;
+
+  // "0819…" is the Indonesian domestic form of "62819…". Only a leading
+  // zero means this; an explicit "+" already carries a country code.
+  const withCountryCode = !hadPlus && digits.startsWith("0") ? `62${digits.slice(1)}` : digits;
+
+  // Short enough to be an extension or a typo, or long enough to be two
+  // numbers run together — either way, not something to send a bill to.
+  if (withCountryCode.length < 8 || withCountryCode.length > 15) return undefined;
+
+  return withCountryCode;
 }
