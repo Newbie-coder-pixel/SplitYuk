@@ -61,9 +61,15 @@ export async function POST(req: Request): Promise<Response> {
     };
   }
 
+  // The app composes the full breakdown (it is the only side that knows
+  // the items and who they were assigned to — the relay deliberately
+  // models no bill data, PRD §13). The one-line version below is the
+  // fallback for an older app build that sends no message of its own.
+  const providedMessage = str(form.get("message"));
   const message =
+    providedMessage ??
     `${billTitle}\n\nHi ${recipientName}, your share comes to Rp ${amountDue.toLocaleString("id-ID")}.` +
-    (attachment ? "\n(Full breakdown attached.)" : "");
+      (attachment ? "\n(A copy of the receipt is attached.)" : "");
 
   const result = await deliver(channel, { phone, email, billTitle, message, attachment });
 

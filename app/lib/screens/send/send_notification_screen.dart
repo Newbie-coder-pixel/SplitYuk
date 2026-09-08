@@ -11,6 +11,7 @@ import '../../core/widgets/dashed_line.dart';
 import '../../core/widgets/receipt_card.dart';
 import '../../core/widgets/segmented_tabs.dart';
 import '../../core/widgets/stamp_badge.dart';
+import '../../logic/share_breakdown.dart';
 import '../../logic/split_result.dart';
 import '../../models/bill.dart';
 import '../../models/member.dart';
@@ -75,12 +76,31 @@ class _SendNotificationScreenState extends State<SendNotificationScreen> {
         );
         continue;
       }
-      final amount = result?.perMember[member.id]?.total ?? 0;
+      final share = result?.perMember[member.id];
+      final amount = share?.total ?? 0;
+      final title = session.bill.title.isEmpty ? 'SplitYuk bill' : session.bill.title;
       outcomes[member.id] = await _notificationService.send(
         member: member,
         channel: channel,
-        billTitle: session.bill.title.isEmpty ? 'SplitYuk bill' : session.bill.title,
+        billTitle: title,
         amountDue: amount,
+        // The itemised breakdown travels in the message itself. Relying on
+        // an attached image meant a member could be asked for money with
+        // nothing showing what it was for if the attachment didn't arrive.
+        messageBody: share == null
+            ? null
+            : ShareBreakdown.build(
+                billTitle: title,
+                recipientName: member.name,
+                items: session.bill.items,
+                memberId: member.id,
+                share: share,
+                billTotal: result!.total,
+                memberCount: session.members.length,
+                // Only WhatsApp renders a monospace block; in an email the
+                // fences would show up as literal backticks.
+                monospace: channel == NotificationChannel.whatsapp,
+              ),
         attachmentImagePath: attachmentPath,
       );
     }

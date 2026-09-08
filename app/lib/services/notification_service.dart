@@ -30,6 +30,10 @@ class NotificationService {
 
   bool get isConfigured => relayBaseUrl != null && relayBaseUrl!.trim().isNotEmpty;
 
+  /// Comfortably under WhatsApp's ~4096-character ceiling, so a bill with
+  /// many items is truncated visibly rather than dropped by the provider.
+  static const int _maxMessageLength = 3500;
+
   /// PRD §11 rule 4: prefer [preferred], but fall back to whichever channel
   /// the member actually has contact info for; null if neither is set.
   static NotificationChannel? resolveChannel(Member member, NotificationChannel preferred) {
@@ -47,6 +51,7 @@ class NotificationService {
     required NotificationChannel channel,
     required String billTitle,
     required int amountDue,
+    String? messageBody,
     String? attachmentImagePath,
   }) async {
     if (!isConfigured) {
@@ -66,6 +71,17 @@ class NotificationService {
         ..fields['billTitle'] = billTitle
         ..fields['amountDue'] = amountDue.toString()
         ..fields['recipientName'] = member.name;
+
+      // The full text the member should read. Sent from here rather than
+      // composed on the relay because only this device knows the items and
+      // who they were assigned to — the relay must not model bill data
+      // (PRD §13). Capped well under WhatsApp's own limit so a long bill
+      // can't get the whole message silently rejected.
+      if (messageBody != null && messageBody.trim().isNotEmpty) {
+        request.fields['message'] = messageBody.length > _maxMessageLength
+            ? '${messageBody.substring(0, _maxMessageLength)}\n…'
+            : messageBody;
+      }
 
       if (channel == NotificationChannel.whatsapp) {
         request.fields['phone'] = member.phone ?? '';
