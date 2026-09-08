@@ -43,6 +43,7 @@ class OcrTextLine {
   final double bottom;
 
   double get height => (bottom - top).abs();
+  double get width => (right - left).abs();
 }
 
 class OcrLayout {
@@ -81,6 +82,12 @@ class OcrLayout {
     }).join('\n');
   }
 
+  /// Two fragments that cover much of the same horizontal span are
+  /// stacked, not side by side, however close their vertical centres drift
+  /// on a skewed photo. Above this share of the narrower fragment they are
+  /// refused as a row.
+  static const double _maxHorizontalOverlapRatio = 0.5;
+
   static bool _sameRow(OcrTextLine a, OcrTextLine b) {
     final overlap = (a.bottom < b.bottom ? a.bottom : b.bottom) -
         (a.top > b.top ? a.top : b.top);
@@ -91,6 +98,20 @@ class OcrLayout {
     final shorter = a.height < b.height ? a.height : b.height;
     if (shorter <= 0) return false;
 
-    return overlap >= shorter * _rowOverlapRatio;
+    if (overlap < shorter * _rowOverlapRatio) return false;
+
+    // Vertical overlap alone is not enough. Photographing a receipt off a
+    // screen (glare, moiré, perspective) inflates the boxes until two
+    // printed rows overlap vertically; merging them then splices a
+    // product name onto an unrelated price. Columns of one row never sit
+    // on top of each other horizontally, so that is the tie-breaker.
+    final horizontal = (a.right < b.right ? a.right : b.right) -
+        (a.left > b.left ? a.left : b.left);
+    if (horizontal <= 0) return true;
+
+    final narrower = a.width < b.width ? a.width : b.width;
+    if (narrower <= 0) return true;
+
+    return horizontal < narrower * _maxHorizontalOverlapRatio;
   }
 }

@@ -87,6 +87,32 @@ void main() {
       );
     });
 
+    test('keeps stacked rows apart even when their boxes overlap vertically', () {
+      // Photographing a receipt off a screen inflates the boxes until two
+      // printed rows overlap vertically. Merging them splices a product
+      // name onto the previous line's price — one real scan produced
+      // "819*****412  Rp 260.940" this way. Columns of a single row never
+      // sit on top of each other horizontally, so that separates them.
+      final lines = [
+        line('MIKKO Dress Series Drip Glue Des', 40, 100, width: 300, height: 30),
+        line('Cinnamoroll Lotion Bottle 45ml', 42, 122, width: 290, height: 30),
+      ];
+
+      expect(
+        OcrLayout.toReadingOrder(lines),
+        'MIKKO Dress Series Drip Glue Des\nCinnamoroll Lotion Bottle 45ml',
+      );
+    });
+
+    test('still joins a row whose columns merely touch at the edges', () {
+      final lines = [
+        line('Paper Bag Red M', 40, 100, width: 200),
+        line('7200', 235, 104, width: 60),
+      ];
+
+      expect(OcrLayout.toReadingOrder(lines), 'Paper Bag Red M 7200');
+    });
+
     test('ignores blank lines and returns empty for no input', () {
       expect(OcrLayout.toReadingOrder(const []), '');
       expect(OcrLayout.toReadingOrder([line('   ', 0, 0)]), '');

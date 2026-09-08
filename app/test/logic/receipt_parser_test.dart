@@ -390,6 +390,46 @@ void main() {
       expect(result.detectedTotal, 4000);
     });
 
+    test('nothing below the summary section is ever an item', () {
+      // From a real scan of a photographed receipt: OCR split "MemberCode"
+      // from its value and "Score Get:" from its own, leaving loose
+      // label/number pairs below the total. Those became items of
+      // Rp 13.045 and Rp 260.940 — money nobody spent, added to everyone's
+      // share.
+      const text = 'Paper Bag Red S\n'
+          '20154549101003000    1    3000\n'
+          'TOTAL                     3000\n'
+          'Score Get\n'
+          '13045\n'
+          'Current Point\n'
+          '10785\n'
+          '819*****412\n'
+          '260940';
+      final result = ReceiptParser.parse(text);
+
+      expect(itemsOf(text), {'Paper Bag Red S': 3000});
+      expect(result.detectedTotal, 3000);
+    });
+
+    test('a stray column header is never used as an item name', () {
+      // OCR routinely lands "Amt" on its own line, away from the rest of
+      // the "Goods code  U/P  Qty  Amt" heading — so the whole-line
+      // metadata filter no longer catches it and it named the item below.
+      const text = 'Goods code    U/P  Qty\n'
+          'Amt\n'
+          'Paper Bag Red S\n'
+          '20154549101003000    1    3000';
+
+      expect(itemsOf(text), {'Paper Bag Red S': 3000});
+    });
+
+    test('a masked loyalty code is never an item, named or unnamed', () {
+      const text = 'Kopi Susu 25.000\nMemberCode\n819*****412\n260940';
+      final result = ReceiptParser.parse(text);
+
+      expect(result.items.map((i) => i.name), ['Kopi Susu']);
+    });
+
     test(
       'end-to-end: the exact receipt that previously produced garbage items',
       () {

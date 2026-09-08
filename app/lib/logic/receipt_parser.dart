@@ -153,6 +153,7 @@ class ReceiptParser {
   static final RegExp _discountLine =
       RegExp(r'\b(discount|diskon|voucher|potongan|promo)\b', caseSensitive: false);
   static final RegExp _taxLine = RegExp(r'\b(tax|pajak|ppn|pb1)\b', caseSensitive: false);
+  static final RegExp _subtotalLine = RegExp(r'\bsub-?\s?total\b', caseSensitive: false);
   static final RegExp _serviceLine =
       RegExp(r'\b(service|servis|svc)\b', caseSensitive: false);
 
@@ -204,6 +205,14 @@ class ReceiptParser {
     var tax = 0;
     var serviceCharge = 0;
     bool awaitingTotalAmount = false;
+
+    // Set once the receipt's summary section starts. Nothing below a
+    // subtotal or grand total is ever a purchased item, so once real items
+    // have been found, everything after that line is refused. Without this
+    // a loyalty-point balance or a masked member code sitting next to a
+    // number becomes an "item" worth hundreds of thousands of Rupiah —
+    // observed on a real scan.
+    var itemsClosed = false;
 
     // The description candidate for the next numeric run, plus the index
     // of the line it came from — a new line resets it, so only the last
@@ -270,6 +279,12 @@ class ReceiptParser {
       final quantity = columnQuantity ?? markerQuantity ?? pendingQuantity ?? 1;
       pendingQuantity = null;
 
+      if (itemsClosed) {
+        nameTokens.clear();
+        nameLine = null;
+        return;
+      }
+
       // "2 x 25.000" with no separate amount column: the price of the line
       // is quantity times unit price, not the unit price.
       var price = amount;
@@ -278,7 +293,8 @@ class ReceiptParser {
         if (multiplied <= _maxAmount) price = multiplied;
       }
 
-      final name = nameTokens.join(' ').trim();
+      final joined = nameTokens.join(' ').trim();
+      final name = _isNoiseName(joined) ? '' : joined;
       if (name.isNotEmpty) {
         items.add(BillItem(
           id: IdGenerator.next('item'),
@@ -331,6 +347,10 @@ class ReceiptParser {
       // be discarded as a payment line and the printed total lost.
       if (_totalKeywords.hasMatch(line)) {
         barrier();
+        // The grand total ends the item list. Guarded on having found
+        // items already, so an OCR misread near the top can't wipe out the
+        // whole receipt.
+        if (items.isNotEmpty) itemsClosed = true;
         final numerics = lineTokens.map(_asNumeric).whereType<String>().toList();
         if (numerics.isEmpty) {
           // A bare "TOTAL" with its amount on the following line/column.
@@ -349,6 +369,9 @@ class ReceiptParser {
 
       if (_skipLine.hasMatch(line)) {
         barrier();
+        // A subtotal line ends the item list for the same reason a grand
+        // total does — what follows it is summary, not shopping.
+        if (items.isNotEmpty && _subtotalLine.hasMatch(line)) itemsClosed = true;
         // Not an item, but some of these carry a bill-level amount worth
         // keeping. A line with no readable amount (e.g. "TAX-Excl  9",
         // where 9 is a rate, not money) contributes nothing — which is
@@ -419,6 +442,52 @@ class ReceiptParser {
       serviceCharge: serviceCharge,
     );
   }
+
+  /// True when [name] is receipt furniture rather than a product.
+  ///
+  /// OCR does not respect the column header's row: when "Amt" or "Qty"
+  /// lands on its own line, the line no longer matches the metadata
+  /// filters (which look for "goods code"/"u/p" on the *whole* line) and
+  /// becomes the name of the item printed beneath it. Likewise a masked
+  /// loyalty code, which is a string of digits and asterisks, not a thing
+  /// anyone bought. Both were seen naming real items on a live scan.
+  static bool _isNoiseName(String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return true;
+
+    // No letters at all: a masked member code, a date, punctuation.
+    if (!RegExp(r'[a-zA-Z]').hasMatch(trimmed)) return true;
+    if (RegExp(r'\*{2,}').hasMatch(trimmed)) return true;
+
+    final normalized = trimmed.toLowerCase().replaceAll(RegExp(r'[^a-z/]'), '');
+    return _columnHeaderWords.contains(normalized);
+  }
+
+  /// Column headings, as OCR leaves them once a row has been split apart.
+  static const Set<String> _columnHeaderWords = {
+    'amt',
+    'amount',
+    'qty',
+    'quantity',
+    'u/p',
+    'up',
+    'unit',
+    'unitprice',
+    'price',
+    'harga',
+    'hrg',
+    'item',
+    'items',
+    'nama',
+    'namabarang',
+    'barang',
+    'description',
+    'desc',
+    'goodscode',
+    'code',
+    'no',
+    'jml',
+  };
 
   /// The Rupiah amount on a discount/tax/service line, if it has one.
   /// Deductions are read as magnitudes, so "-5.000" and "(5.000)" both

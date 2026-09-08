@@ -17,11 +17,28 @@ import '../members/pick_members_screen.dart';
 /// FR-2.3/FR-2.4: the OCR result must be shown fully editable, with a
 /// non-blocking warning if the reviewed total doesn't match the receipt's
 /// printed total.
+/// Which reader produced the result being reviewed. The two are not
+/// remotely equal in accuracy, and the user has to be told which one they
+/// are looking at — a silent downgrade to the on-device reader looks
+/// exactly like the AI having done a terrible job.
+enum ReceiptReadSource { ai, onDevice }
+
 class ReviewScannedScreen extends StatefulWidget {
-  const ReviewScannedScreen({super.key, required this.imagePath, required this.parsed});
+  const ReviewScannedScreen({
+    super.key,
+    required this.imagePath,
+    required this.parsed,
+    this.readSource = ReceiptReadSource.ai,
+    this.onRetry,
+  });
 
   final String imagePath;
   final ParsedReceipt parsed;
+  final ReceiptReadSource readSource;
+
+  /// Invoked when the user asks to read the photo again — only offered
+  /// after an on-device read, where retrying can materially improve it.
+  final VoidCallback? onRetry;
 
   @override
   State<ReviewScannedScreen> createState() => _ReviewScannedScreenState();
@@ -70,6 +87,20 @@ class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
   int get _reviewedTotal => _reviewedSubtotal - _discount + _tax + _serviceCharge;
 
   bool get _hasAdjustments => _discount != 0 || _tax != 0 || _serviceCharge != 0;
+
+  /// "2 × Rp 3.600" for a multi-unit line, so the quantity, the unit price
+  /// and the line total can all be checked against the paper at a glance.
+  ///
+  /// Null for a single unit, where it would only repeat the amount. When
+  /// the total doesn't divide evenly the unit price is marked approximate
+  /// rather than shown as exact — the point of this line is checking the
+  /// arithmetic, so a figure that doesn't multiply back must say so.
+  String? _unitPriceLabel(BillItem item) {
+    if (item.quantity <= 1) return null;
+    final unit = CurrencyFormatter.format(item.price ~/ item.quantity);
+    final exact = item.price % item.quantity == 0;
+    return '${item.quantity} × ${exact ? '' : '≈'}$unit';
+  }
 
   bool get _hasMismatch => _detectedTotal != null && _detectedTotal != _reviewedTotal;
 
@@ -156,6 +187,59 @@ class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
                 ),
               ],
             ),
+            if (widget.readSource == ReceiptReadSource.onDevice) ...[
+              const SizedBox(height: AppSpacing.md),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(AppSpacing.md),
+                decoration: BoxDecoration(
+                  color: AppColors.bgAmber,
+                  borderRadius: BorderRadius.circular(AppRadius.small),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.offline_bolt_outlined, color: AppColors.textAmber),
+                        const SizedBox(width: AppSpacing.sm),
+                        const Expanded(
+                          child: Text(
+                            'Read on this device, not by AI',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textAmber,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    const Text(
+                      'The AI reader could not be reached, so the photo was read on the '
+                      'phone instead. That is much less accurate — check every line and '
+                      'amount below, or try again.',
+                      style: TextStyle(color: AppColors.textAmber),
+                    ),
+                    if (widget.onRetry != null) ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton.icon(
+                          onPressed: () {
+                            Navigator.of(context).pop();
+                            widget.onRetry!();
+                          },
+                          icon: const Icon(Icons.refresh, size: 18),
+                          label: const Text('Try reading with AI again'),
+                          style: TextButton.styleFrom(foregroundColor: AppColors.textAmber),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: AppSpacing.lg),
             ReceiptCard(
               child: Column(
@@ -191,7 +275,7 @@ class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
                             child: Text('QTY', style: AppTypography.eyebrow),
                           ),
                           Expanded(child: Text('ITEM', style: AppTypography.eyebrow)),
-                          Text('AMOUNT', style: AppTypography.eyebrow),
+                          Text('LINE TOTAL', style: AppTypography.eyebrow),
                           // Keeps the header aligned with the edit/remove
                           // buttons on each row below.
                           SizedBox(width: _actionsColumnWidth),
@@ -232,7 +316,24 @@ class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
                             Expanded(
                               child: Padding(
                                 padding: const EdgeInsets.only(top: 2, right: AppSpacing.sm),
-                                child: Text(item.name, style: AppTypography.body),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(item.name, style: AppTypography.body),
+                                    // Only worth the extra line when there
+                                    // is more than one: "2 × Rp 3.600" is
+                                    // how you check a line total against
+                                    // the receipt, "1 × Rp 3.000" is noise.
+                                    if (_unitPriceLabel(item) != null)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 2),
+                                        child: Text(
+                                          _unitPriceLabel(item)!,
+                                          style: AppTypography.bodySecondary,
+                                        ),
+                                      ),
+                                  ],
+                                ),
                               ),
                             ),
                             Padding(

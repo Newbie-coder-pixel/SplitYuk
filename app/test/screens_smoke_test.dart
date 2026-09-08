@@ -112,8 +112,16 @@ void main() {
 
     expect(find.text('QTY'), findsOneWidget);
     expect(find.text('ITEM'), findsOneWidget);
-    expect(find.text('AMOUNT'), findsOneWidget);
+    expect(find.text('LINE TOTAL'), findsOneWidget);
     expect(find.text('8 lines · 9 items'), findsOneWidget);
+
+    // The one multi-unit line shows how its total is made up, so it can be
+    // checked against the receipt; single-unit lines don't repeat themselves.
+    expect(find.text('2 × Rp 3.600'), findsOneWidget);
+    expect(find.textContaining('1 × '), findsNothing);
+
+    // Read by AI, so no on-device warning.
+    expect(find.text('Read on this device, not by AI'), findsNothing);
 
     // The discount is shown as a deduction, and the total is the amount
     // actually owed — so it matches the receipt and no mismatch warning
@@ -122,6 +130,29 @@ void main() {
     expect(find.text('- Rp 276.660'), findsOneWidget);
     expect(find.text('Rp 260.940'), findsOneWidget);
     expect(find.text('Total mismatch detected'), findsNothing);
+  });
+
+  testWidgets('ReviewScannedScreen says so when the read came from the device, not the AI',
+      (tester) async {
+    final parsed = ParsedReceipt(
+      items: [BillItem(id: 'i1', name: 'Kopi Susu', price: 25000)],
+      detectedTotal: 25000,
+    );
+
+    await _pump(
+      tester,
+      SessionController(),
+      ReviewScannedScreen(
+        imagePath: '/tmp/receipt.jpg',
+        parsed: parsed,
+        readSource: ReceiptReadSource.onDevice,
+        onRetry: () {},
+      ),
+      surfaceSize: const Size(390, 3000),
+    );
+
+    expect(find.text('Read on this device, not by AI'), findsOneWidget);
+    expect(find.text('Try reading with AI again'), findsOneWidget);
   });
 
   testWidgets('ReviewScannedScreen warns when the items do not reach the printed total',

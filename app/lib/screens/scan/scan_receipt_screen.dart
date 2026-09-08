@@ -50,6 +50,21 @@ class _ScanReceiptScreenState extends State<ScanReceiptScreen> {
     super.dispose();
   }
 
+  /// The relay already retries Gemini internally, but its whole budget can
+  /// still be spent by one overloaded model. One more attempt from here
+  /// costs a few seconds and is worth far more than the on-device reader's
+  /// output, which regularly mistakes a loyalty code for a purchase.
+  Future<AiReceiptOutcome> _readWithAi(String imagePath) async {
+    var outcome = await _aiReceiptService.parseReceipt(imagePath);
+
+    // Only a transient failure is worth repeating — an unconfigured relay
+    // will fail identically however many times it is asked.
+    if (!outcome.succeeded && _aiReceiptService.isConfigured) {
+      outcome = await _aiReceiptService.parseReceipt(imagePath);
+    }
+    return outcome;
+  }
+
   Future<void> _pickImage(ImageSource source) async {
     setState(() {
       _isProcessing = true;
@@ -61,10 +76,29 @@ class _ScanReceiptScreenState extends State<ScanReceiptScreen> {
         setState(() => _isProcessing = false);
         return;
       }
+      await _readPhoto(photo.path);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isProcessing = false;
+        _error = 'Could not read that photo. Try again, or enter the bill manually.';
+      });
+    }
+  }
 
+  /// Reads an already-captured photo. Separate from picking it so the
+  /// review screen's retry can re-read *this* photo rather than sending
+  /// the user back to the camera for a new one.
+  Future<void> _readPhoto(String imagePath) async {
+    setState(() {
+      _isProcessing = true;
+      _error = null;
+    });
+    try {
       ParsedReceipt? parsed;
+      var readSource = ReceiptReadSource.ai;
 
-      final aiOutcome = await _aiReceiptService.parseReceipt(photo.path);
+      final aiOutcome = await _readWithAi(imagePath);
       if (aiOutcome.succeeded) {
         if (!aiOutcome.isReceipt) {
           if (!mounted) return;
@@ -77,8 +111,11 @@ class _ScanReceiptScreenState extends State<ScanReceiptScreen> {
         parsed = aiOutcome.parsed;
       } else {
         // AI relay unreachable/not configured — fall back to on-device OCR
-        // rather than blocking the scan entirely.
-        final rawText = await _ocrService.recognizeText(photo.path);
+        // rather than blocking the scan entirely. The review screen is
+        // told, because this result is far weaker and must not be
+        // presented as if the AI had produced it.
+        readSource = ReceiptReadSource.onDevice;
+        final rawText = await _ocrService.recognizeText(imagePath);
         final localParsed = ReceiptParser.parse(rawText);
         final validation = ReceiptValidator.validate(rawText, localParsed);
         if (!validation.isValid) {
@@ -102,11 +139,21 @@ class _ScanReceiptScreenState extends State<ScanReceiptScreen> {
       }
 
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(
+      // Pushed, not pushReplacement: this screen has to stay alive behind
+      // the review so "Retake photo" comes back here (rather than skipping
+      // out to the input chooser) and so the review's retry can ask it to
+      // read the photo again. Which means clearing the spinner now, or
+      // returning here would find it stuck on "Reading your receipt…".
+      setState(() => _isProcessing = false);
+      Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => ReviewScannedScreen(
-            imagePath: photo.path,
+            imagePath: imagePath,
             parsed: parsed!,
+            readSource: readSource,
+            onRetry: readSource == ReceiptReadSource.onDevice
+                ? () => _readPhoto(imagePath)
+                : null,
           ),
         ),
       );
