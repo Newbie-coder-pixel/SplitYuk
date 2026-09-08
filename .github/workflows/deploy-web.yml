@@ -5,12 +5,13 @@ name: Deploy web app
 # Safari or Chrome, "Add to Home Screen" for an icon, and none of iOS's
 # Developer Mode / 7-day re-signing that sideloading a build requires.
 #
-# Needs three repository secrets, the same shape as deploy-relay.yml but
-# pointing at a SECOND Vercel project (the relay's own project id must not
-# be reused, or this would overwrite the API):
-#   VERCEL_TOKEN          - reuse the existing one
-#   VERCEL_ORG_ID         - reuse the existing one
-#   VERCEL_WEB_PROJECT_ID - from the new project's Settings → General
+# Reuses the VERCEL_TOKEN and VERCEL_ORG_ID secrets that deploy-relay.yml
+# already needs. The project id is written in plain text below rather than
+# stored as a secret: it is an identifier, not a credential, and is useless
+# without the token — and hardcoding it means no extra repo setup.
+#
+# It points at a SECOND Vercel project (splityuk-web). Reusing the relay's
+# project id here would overwrite the API with a static site.
 on:
   workflow_dispatch:
   push:
@@ -56,5 +57,6 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_WEB_PROJECT_ID }}
+          # Vercel project "splityuk-web" (newbie-coder-pixel's projects).
+          VERCEL_PROJECT_ID: prj_LL7df03X8dMP0YBwYgjI1dMfZdoX
         run: npx vercel@latest deploy --prod --yes

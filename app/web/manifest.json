@@ -1,11 +1,11 @@
 {
-    "name": "splityuk_app",
-    "short_name": "splityuk_app",
+    "name": "SplitYuk",
+    "short_name": "SplitYuk",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#F3F1F6",
+    "theme_color": "#C97B6E",
+    "description": "Split a bill with friends: scan the receipt, assign the items, and tell everyone what they owe.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
