@@ -73,7 +73,13 @@ class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
     _discount = widget.parsed.discount;
     _tax = widget.parsed.tax;
     _serviceCharge = widget.parsed.serviceCharge;
+    _includedTax = widget.parsed.includedTax;
   }
+
+  /// Tax the receipt already built into its prices. Shown but never added,
+  /// and not editable — it isn't a number the split depends on, it is
+  /// there so a reader can see the tax was understood rather than missed.
+  late int _includedTax;
 
   int get _reviewedSubtotal => _items.fold(0, (sum, item) => sum + item.price);
 
@@ -409,7 +415,13 @@ class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
                     _SummaryRow(label: 'Discount', amount: -_discount, highlight: true),
                   if (_tax > 0) _SummaryRow(label: 'Tax', amount: _tax),
                   if (_serviceCharge > 0) _SummaryRow(label: 'Service', amount: _serviceCharge),
-                  if (!_hasAdjustments)
+                  if (_includedTax > 0)
+                    _SummaryRow(
+                      label: 'Tax (already in the prices)',
+                      amount: _includedTax,
+                      muted: true,
+                    ),
+                  if (!_hasAdjustments && _includedTax == 0)
                     const Padding(
                       padding: EdgeInsets.symmetric(vertical: 4),
                       child: Text(
@@ -515,11 +527,21 @@ class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
 /// One line of the receipt-style money summary. A negative [amount] is
 /// rendered with its minus sign, so a deduction reads as a deduction.
 class _SummaryRow extends StatelessWidget {
-  const _SummaryRow({required this.label, required this.amount, this.highlight = false});
+  const _SummaryRow({
+    required this.label,
+    required this.amount,
+    this.highlight = false,
+    this.muted = false,
+  });
 
   final String label;
   final int amount;
   final bool highlight;
+
+  /// For a figure that is shown for information but does not move the
+  /// total — tax already inside the prices. Rendered quieter so it can't
+  /// be read as another charge being stacked on.
+  final bool muted;
 
   @override
   Widget build(BuildContext context) {
@@ -534,9 +556,11 @@ class _SummaryRow extends StatelessWidget {
           Expanded(child: Text(label, style: AppTypography.bodySecondary)),
           Text(
             formatted,
-            style: AppTypography.amount.copyWith(
-              color: highlight ? AppColors.accentViolet : null,
-            ),
+            style: muted
+                ? AppTypography.bodySecondary
+                : AppTypography.amount.copyWith(
+                    color: highlight ? AppColors.accentViolet : null,
+                  ),
           ),
         ],
       ),

@@ -8,6 +8,7 @@ class ParsedReceipt {
     this.discount = 0,
     this.tax = 0,
     this.serviceCharge = 0,
+    this.includedTax = 0,
   });
 
   final List<BillItem> items;
@@ -28,12 +29,20 @@ class ParsedReceipt {
   final int tax;
   final int serviceCharge;
 
+  /// Tax the receipt prints but has *already* built into the item prices —
+  /// an Indonesian restaurant bill's `PBJT 10%` under an
+  /// "Eat-In Tot (trmasuk PAJAK)", or the `TAX-Excl` breakdown of a retail
+  /// total. Shown so the reader can see the tax was understood rather than
+  /// missed, and deliberately **never** added to [reconciledTotal]: adding
+  /// it would charge the group for tax they already paid.
+  final int includedTax;
+
   /// What the items and extras actually add up to: the figure to compare
   /// against [detectedTotal], and what each member's shares must sum to.
   int get reconciledTotal =>
       items.fold<int>(0, (sum, item) => sum + item.price) - discount + tax + serviceCharge;
 
-  bool get hasExtras => discount != 0 || tax != 0 || serviceCharge != 0;
+  bool get hasExtras => discount != 0 || tax != 0 || serviceCharge != 0 || includedTax != 0;
 }
 
 /// Turns raw OCR text into candidate line items. This is a heuristic, not
@@ -141,8 +150,27 @@ class ReceiptParser {
 
   static final RegExp _dividerLine = RegExp(r'^-{2,}.*-{2,}$|^-{3,}$');
 
-  static final RegExp _totalKeywords = RegExp(
-    r'^\s*(grand\s+|nett?\s+)?(total|jumlah|amount\s+due)\b',
+  /// A line that might carry the amount actually paid.
+  ///
+  /// Not anchored to the start of the line any more: a McDonald's bill
+  /// prints "Eat-In Tot(trmasuk PAJAK)" and a hotel one "Total Bayar", and
+  /// requiring the keyword first missed both. Breadth is safe only because
+  /// [_notATotalLine] carves out the look-alikes below.
+  static final RegExp _totalCandidate = RegExp(
+    r'\b(grand\s*total|total|tot|jumlah|amount\s+due|nett?)\b',
+    caseSensitive: false,
+  );
+
+  /// Lines that read like a total but are not the amount paid.
+  ///
+  /// The dangerous ones are the tax-base figures an Indonesian receipt
+  /// prints *below* the real total — "Net Sales", "DPP". On the McDonald's
+  /// bill above, Net Sales is 59.546 against a real total of 65.500, so
+  /// mistaking it would under-bill the table by the whole tax. A subtotal
+  /// and a "Total Item 3" count are the other traps.
+  static final RegExp _notATotalLine = RegExp(
+    r'\b(sub-?\s?total|net\s*sales|dpp|total\s+(item|items|qty|quantity|'
+    r'diskon|discount|hemat|saving)|nota|note)\b',
     caseSensitive: false,
   );
 
@@ -152,8 +180,17 @@ class ReceiptParser {
   /// like a total mismatch and overcharges every member.
   static final RegExp _discountLine =
       RegExp(r'\b(discount|diskon|voucher|potongan|promo)\b', caseSensitive: false);
-  static final RegExp _taxLine = RegExp(r'\b(tax|pajak|ppn|pb1)\b', caseSensitive: false);
+  static final RegExp _taxLine =
+      RegExp(r'\b(tax|pajak|ppn|pb1|pbjt|pph)\b', caseSensitive: false);
   static final RegExp _subtotalLine = RegExp(r'\bsub-?\s?total\b', caseSensitive: false);
+
+  /// The amount tax is *calculated on*, not the tax. "DPP PBJT 59.546"
+  /// contains a tax word but is the base, and counting it as tax made a
+  /// Rp 5.954 tax read as Rp 65.500 — the entire bill over again.
+  static final RegExp _taxBaseLine = RegExp(
+    r'\b(dpp|net\s*sales|dasar\s*pengenaan|taxable)\b',
+    caseSensitive: false,
+  );
   static final RegExp _serviceLine =
       RegExp(r'\b(service|servis|svc)\b', caseSensitive: false);
 
@@ -166,7 +203,8 @@ class ReceiptParser {
   /// the next line as part of a product description, and a number below it
   /// never belongs to a product above it).
   static final RegExp _skipLine = RegExp(
-    r'\b(subtotal|sub-total|pajak|tax|ppn|pb1|service|servis|svc|discount|'
+    r'\b(subtotal|sub-total|pajak|tax|ppn|pb1|pbjt|pph|net\s*sales|\bdpp\b|'
+    r'npwp|service|servis|svc|discount|'
     r'diskon|voucher|potongan|promo|'
     r'change|kembali|cash|tunai|bayar|debit|kredit|credit|visa|mastercard|'
     r'\bbca\b|\bbni\b|\bbri\b|mandiri|cimb|permata|danamon|\bbtn\b|ovo|gopay|'
@@ -345,7 +383,7 @@ class ReceiptParser {
 
       // Checked before _skipLine on purpose: "Total Bayar" would otherwise
       // be discarded as a payment line and the printed total lost.
-      if (_totalKeywords.hasMatch(line)) {
+      if (_totalCandidate.hasMatch(line) && !_notATotalLine.hasMatch(line)) {
         barrier();
         // The grand total ends the item list. Guarded on having found
         // items already, so an OCR misread near the top can't wipe out the
@@ -376,10 +414,12 @@ class ReceiptParser {
         // keeping. A line with no readable amount (e.g. "TAX-Excl  9",
         // where 9 is a rate, not money) contributes nothing — which is
         // right: on that receipt the printed prices already include tax.
-        final amount = _adjustmentAmountOn(lineTokens);
+        final amount = _taxBaseLine.hasMatch(line) ? null : _adjustmentAmountOn(lineTokens);
         if (amount != null) {
           if (_discountLine.hasMatch(line)) {
-            discount += amount;
+            // Only above the summary line: a deduction printed below the
+            // total has already been applied to it.
+            if (!itemsClosed) discount += amount;
           } else if (_taxLine.hasMatch(line)) {
             tax += amount;
           } else if (_serviceLine.hasMatch(line)) {
@@ -434,12 +474,31 @@ class ReceiptParser {
 
     flushRun();
 
+    // Decide from the arithmetic, not from wording, whether the tax and
+    // service found were charged on top or were already inside the item
+    // prices. A receipt says this in a hundred different ways — "trmasuk
+    // PAJAK", "TAX-Excl", "incl. PPN", or nothing at all — but there is
+    // only one question that matters, and it is checkable: do the items
+    // alone already come to what the receipt says was paid? If they do,
+    // then whatever tax is printed is a breakdown of that figure, not an
+    // addition to it, and adding it would overcharge the group.
+    var includedTax = 0;
+    if (total != null && items.isNotEmpty && (tax > 0 || serviceCharge > 0)) {
+      final itemsSubtotal = items.fold<int>(0, (sum, item) => sum + item.price);
+      if (itemsSubtotal - discount == total) {
+        includedTax = tax + serviceCharge;
+        tax = 0;
+        serviceCharge = 0;
+      }
+    }
+
     return ParsedReceipt(
       items: items,
       detectedTotal: total,
       discount: discount,
       tax: tax,
       serviceCharge: serviceCharge,
+      includedTax: includedTax,
     );
   }
 

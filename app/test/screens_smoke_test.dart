@@ -132,6 +132,39 @@ void main() {
     expect(find.text('Total mismatch detected'), findsNothing);
   });
 
+  testWidgets('ReviewScannedScreen shows included tax without adding it to the total',
+      (tester) async {
+    final parsed = ParsedReceipt(
+      items: [
+        BillItem(id: 'i1', name: 'French Fries Medium', price: 48000, quantity: 2),
+        BillItem(id: 'i2', name: 'McFlurry Matcha OREO', price: 17500),
+      ],
+      detectedTotal: 65500,
+      includedTax: 5954,
+    );
+
+    await _pump(
+      tester,
+      SessionController(),
+      ReviewScannedScreen(imagePath: '/tmp/receipt.jpg', parsed: parsed),
+      surfaceSize: const Size(390, 3000),
+    );
+
+    expect(find.text('Tax (already in the prices)'), findsOneWidget);
+    expect(find.text('Rp 5.954'), findsOneWidget);
+
+    // The total is the amount actually paid — the tax is not stacked on
+    // top of prices that already contain it.
+    expect(find.text('Rp 65.500'), findsWidgets);
+    expect(find.text('Rp 71.454'), findsNothing);
+    expect(find.text('Total mismatch detected'), findsNothing);
+    expect(
+      find.text('No discount, tax or service charge was found on this receipt.'),
+      findsNothing,
+      reason: 'tax was found — it is just already included',
+    );
+  });
+
   testWidgets('ReviewScannedScreen says so when the read came from the device, not the AI',
       (tester) async {
     final parsed = ParsedReceipt(

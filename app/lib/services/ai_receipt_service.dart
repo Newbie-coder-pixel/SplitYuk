@@ -115,6 +115,7 @@ class AiReceiptService {
           discount: _amount(json['discount']),
           tax: _amount(json['tax']),
           serviceCharge: _amount(json['serviceCharge']),
+          includedTax: _amount(json['includedTax']),
         ),
       );
     } catch (_) {

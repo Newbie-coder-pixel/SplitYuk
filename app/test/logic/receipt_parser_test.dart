@@ -205,6 +205,57 @@ void main() {
       expect(result.reconciledTotal, 18000);
     });
 
+    test('fast-food bill: tax already inside the prices is not added again', () {
+      // A real McDonald's Indonesia bill. Everything below "Eat-In Tot" is
+      // the tax breakdown *of that same figure*: Net Sales 59.546 is the
+      // pre-tax base and PBJT 5.954 the tax on it, and 59.546 + 5.954 =
+      // 65.500, the amount actually paid. Adding PBJT on top would bill
+      // the table Rp 71.454 for a Rp 65.500 meal; reading Net Sales as the
+      // total would under-bill them by the whole tax.
+      const text = 'QTY ITEM                    TOTAL\n'
+          '  2 French Fries Medium     48,000\n'
+          '  1 McFlurry Matcha OREO    17,500\n'
+          'Eat-In Tot(trmasuk PAJAK)   65,500\n'
+          'Cashless BCA                65,500\n'
+          'Change                           0\n'
+          'Net Sales                   59,546\n'
+          'DPP PBJT                    59,546\n'
+          'PBJT              10%        5,954';
+      final result = ReceiptParser.parse(text);
+
+      expect(itemsOf(text), {'French Fries Medium': 48000, 'McFlurry Matcha OREO': 17500});
+      expect(result.detectedTotal, 65500, reason: 'the amount paid, not Net Sales');
+      expect(result.tax, 0, reason: 'PBJT is inside the price, never added on top');
+      expect(result.includedTax, 5954, reason: 'but it is reported, not silently dropped');
+      expect(result.reconciledTotal, 65500);
+      expect(result.reconciledTotal, result.detectedTotal);
+    });
+
+    test('tax genuinely added on top is still added', () {
+      // The mirror image: here the items alone do *not* reach the printed
+      // total, so the tax is a real addition and must stay one.
+      const text = 'Nasi Goreng             50.000\n'
+          'PPN 11%                  5.500\n'
+          'Total                   55.500';
+      final result = ReceiptParser.parse(text);
+
+      expect(result.tax, 5500);
+      expect(result.includedTax, 0);
+      expect(result.reconciledTotal, 55500);
+    });
+
+    test('"Net Sales" is never mistaken for the amount paid', () {
+      const text = 'Kopi Susu 25.000\nNet Sales 22.500\nTotal 25.000';
+
+      expect(ReceiptParser.parse(text).detectedTotal, 25000);
+    });
+
+    test('a "Total Item" count line is not the total', () {
+      const text = 'Kopi Susu 25.000\nTotal Item 1\nTotal Bayar 25.000';
+
+      expect(ReceiptParser.parse(text).detectedTotal, 25000);
+    });
+
     test('total written in caps with a colon', () {
       const text = 'Bakso Urat              30.000\nTOTAL:                  30.000';
 

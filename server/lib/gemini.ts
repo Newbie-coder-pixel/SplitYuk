@@ -15,6 +15,8 @@ export interface GeminiParseResult {
   /** Charged on top of the item prices; 0 when prices already include it. */
   tax?: number;
   serviceCharge?: number;
+  /** Tax already inside the item prices — reported, never added. */
+  includedTax?: number;
 }
 
 interface GeminiOutcome {
@@ -72,6 +74,7 @@ const RECEIPT_SCHEMA = {
     discount: { type: "integer" },
     tax: { type: "integer" },
     serviceCharge: { type: "integer" },
+    includedTax: { type: "integer" },
   },
   required: ["isReceipt", "items"],
 };
@@ -105,10 +108,19 @@ const PROMPT =
   "'Discount Price' deduction added together; 'tax' and 'serviceCharge' " +
   "are amounts charged ON TOP of the item prices. Report tax and " +
   "serviceCharge as 0 when the receipt's printed item prices already " +
-  "include them (Indonesian receipts often print a tax-inclusive total, " +
-  "sometimes shown as a 'TAX-Excl' breakdown of a total already paid) — " +
-  "adding them again would overcharge the group. Never report a tax RATE " +
-  "(a percentage like 11) in these fields; they are money amounts only.\n\n" +
+  "include them, and put that tax in 'includedTax' instead — adding it " +
+  "again would overcharge the group. Indonesian receipts very often work " +
+  "this way, and say so in many different wordings ('trmasuk PAJAK', " +
+  "'TAX-Excl', 'incl. PPN') or not at all, so decide it by arithmetic " +
+  "rather than by the words: if the item prices already add up to the " +
+  "amount actually paid, then any tax printed is a breakdown of that " +
+  "figure and belongs in includedTax. Lines like 'Net Sales', 'DPP' or " +
+  "'Dasar Pengenaan' are the amount tax was calculated ON — never the tax " +
+  "itself, and never the total. Never report a tax RATE (a percentage " +
+  "like 11) in any of these fields; they are money amounts only.\n\n" +
+  "detectedTotal is the amount actually paid — the grand total, the " +
+  "'Eat-In Tot', the 'Total Bayar' — never a pre-tax subtotal, never " +
+  "'Net Sales', and never a line counting how many items were bought.\n\n" +
   "Before answering, check your own numbers: sum(item prices) - discount + " +
   "tax + serviceCharge must equal detectedTotal. If it doesn't, re-read " +
   "the receipt and correct whichever part you got wrong — a missed item, a " +
@@ -443,7 +455,7 @@ function isValidParseResult(value: unknown): value is GeminiParseResult {
     const it = item as Record<string, unknown>;
     if (typeof it.name !== "string" || typeof it.price !== "number") return false;
   }
-  for (const numeric of ["detectedTotal", "discount", "tax", "serviceCharge"]) {
+  for (const numeric of ["detectedTotal", "discount", "tax", "serviceCharge", "includedTax"]) {
     if (v[numeric] !== undefined && typeof v[numeric] !== "number") return false;
   }
   if (v.reason !== undefined && typeof v.reason !== "string") return false;
