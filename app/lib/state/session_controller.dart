@@ -45,8 +45,9 @@ class SessionController extends ChangeNotifier {
   /// state. Call this before [resetSession] whenever a session with a
   /// receipt photo or rendered summary is being closed.
   Future<void> closeSession() async {
+    // Only the camera/gallery temp file the OS wrote; the attachment
+    // itself lives in memory and goes when the bill does.
     await TempFileCleaner.deleteIfExists(_bill.receiptImagePath);
-    await TempFileCleaner.deleteIfExists(_bill.renderedSummaryImagePath);
     resetSession();
   }
 

@@ -8,11 +8,34 @@ import { parseReceiptWithGemini, resolveImageMimeType } from "../lib/gemini.js";
 const MAX_PARSES_PER_HOUR = 10;
 
 /**
+ * The web build runs on a different origin from this relay, so the
+ * browser will not let the page read a response without these. The mobile
+ * builds never needed them, which is exactly why their absence would only
+ * show up on the web — as an opaque network failure.
+ *
+ * A wildcard origin is safe here: every endpoint is authenticated by a
+ * random installation token in the body, there are no cookies, and
+ * nothing is stored per-origin (PRD §12).
+ */
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Max-Age": "86400",
+};
+
+export async function OPTIONS(): Promise<Response> {
+  return new Response(null, { status: 204, headers: CORS_HEADERS });
+}
+
+/**
  * Reads a receipt photo via Gemini and returns structured items/total.
  * Like /api/notify, this is stateless with respect to content — the image
  * is held in memory only for this one request and is never written to a
  * database, file, or log.
  */
+
+
 export async function POST(req: Request): Promise<Response> {
   let form: FormData;
   try {
@@ -65,6 +88,6 @@ function str(value: FormDataEntryValue | null): string | undefined {
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
   });
 }

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -46,6 +47,13 @@ class _PickMembersScreenState extends State<PickMembersScreen> {
   }
 
   Future<void> _loadContacts() async {
+    // flutter_contacts is a mobile-only plugin. On the web there is no
+    // address book to read, so say so rather than throwing on a platform
+    // channel that doesn't exist — members are added by hand instead.
+    if (kIsWeb) {
+      setState(() => _state = _ContactsState.unavailable);
+      return;
+    }
     setState(() => _state = _ContactsState.loading);
     try {
       final granted = await _contactsService.requestPermission();

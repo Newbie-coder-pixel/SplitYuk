@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -37,7 +40,10 @@ class ScanReceiptScreen extends StatefulWidget {
 
 class _ScanReceiptScreenState extends State<ScanReceiptScreen> {
   final ImagePicker _picker = ImagePicker();
-  final OcrService _ocrService = OcrService();
+  /// Created on demand, never on the web: constructing and disposing the
+  /// ML Kit recognizer touches a platform channel that only exists on
+  /// Android and iOS.
+  OcrService? _ocrService;
   final AiReceiptService _aiReceiptService = AiReceiptService(
     relayBaseUrl: const String.fromEnvironment('SPLITYUK_RELAY_URL'),
   );
@@ -46,7 +52,7 @@ class _ScanReceiptScreenState extends State<ScanReceiptScreen> {
 
   @override
   void dispose() {
-    _ocrService.dispose();
+    _ocrService?.dispose();
     super.dispose();
   }
 
@@ -54,13 +60,13 @@ class _ScanReceiptScreenState extends State<ScanReceiptScreen> {
   /// still be spent by one overloaded model. One more attempt from here
   /// costs a few seconds and is worth far more than the on-device reader's
   /// output, which regularly mistakes a loyalty code for a purchase.
-  Future<AiReceiptOutcome> _readWithAi(String imagePath) async {
-    var outcome = await _aiReceiptService.parseReceipt(imagePath);
+  Future<AiReceiptOutcome> _readWithAi(Uint8List bytes, String filename) async {
+    var outcome = await _aiReceiptService.parseReceipt(bytes, filename: filename);
 
     // Only a transient failure is worth repeating — an unconfigured relay
     // will fail identically however many times it is asked.
     if (!outcome.succeeded && _aiReceiptService.isConfigured) {
-      outcome = await _aiReceiptService.parseReceipt(imagePath);
+      outcome = await _aiReceiptService.parseReceipt(bytes, filename: filename);
     }
     return outcome;
   }
@@ -76,7 +82,7 @@ class _ScanReceiptScreenState extends State<ScanReceiptScreen> {
         setState(() => _isProcessing = false);
         return;
       }
-      await _readPhoto(photo.path);
+      await _readPhoto(photo);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -89,16 +95,21 @@ class _ScanReceiptScreenState extends State<ScanReceiptScreen> {
   /// Reads an already-captured photo. Separate from picking it so the
   /// review screen's retry can re-read *this* photo rather than sending
   /// the user back to the camera for a new one.
-  Future<void> _readPhoto(String imagePath) async {
+  Future<void> _readPhoto(XFile photo) async {
     setState(() {
       _isProcessing = true;
       _error = null;
     });
     try {
+      // Read once, in memory. Nothing downstream needs to re-open the
+      // file, which is what lets the identical code path run on the web
+      // where there is no filesystem at all.
+      final bytes = await photo.readAsBytes();
+
       ParsedReceipt? parsed;
       var readSource = ReceiptReadSource.ai;
 
-      final aiOutcome = await _readWithAi(imagePath);
+      final aiOutcome = await _readWithAi(bytes, photo.name);
       if (aiOutcome.succeeded) {
         if (!aiOutcome.isReceipt) {
           if (!mounted) return;
@@ -115,7 +126,21 @@ class _ScanReceiptScreenState extends State<ScanReceiptScreen> {
         // told, because this result is far weaker and must not be
         // presented as if the AI had produced it.
         readSource = ReceiptReadSource.onDevice;
-        final rawText = await _ocrService.recognizeText(imagePath);
+        if (kIsWeb) {
+          // ML Kit is a mobile-only plugin, so on the web there is no
+          // second reader to fall back to. Say that plainly instead of
+          // crashing on a platform channel that isn't there.
+          if (!mounted) return;
+          setState(() {
+            _isProcessing = false;
+            _error = aiOutcome.error ??
+                'The AI reader could not be reached. Check your connection and try again, '
+                    'or enter the bill manually.';
+          });
+          return;
+        }
+        final ocr = _ocrService ??= OcrService();
+        final rawText = await ocr.recognizeText(photo.path);
         final localParsed = ReceiptParser.parse(rawText);
         final validation = ReceiptValidator.validate(rawText, localParsed);
         if (!validation.isValid) {
@@ -148,11 +173,12 @@ class _ScanReceiptScreenState extends State<ScanReceiptScreen> {
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => ReviewScannedScreen(
-            imagePath: imagePath,
+            imagePath: kIsWeb ? null : photo.path,
+            imageBytes: bytes,
             parsed: parsed!,
             readSource: readSource,
             onRetry: readSource == ReceiptReadSource.onDevice
-                ? () => _readPhoto(imagePath)
+                ? () => _readPhoto(photo)
                 : null,
           ),
         ),

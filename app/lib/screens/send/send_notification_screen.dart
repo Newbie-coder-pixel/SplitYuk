@@ -49,14 +49,11 @@ class _SendNotificationScreenState extends State<SendNotificationScreen> {
   Future<void> _send(SessionController session) async {
     setState(() => _isSending = true);
 
-    String? attachmentPath = session.bill.attachmentImagePath;
-    if (attachmentPath == null) {
+    var attachmentBytes = session.bill.attachmentBytes;
+    if (attachmentBytes == null) {
       try {
-        attachmentPath = await _imageRenderService.captureToFile(
-          _previewKey,
-          'splityuk_summary_${DateTime.now().millisecondsSinceEpoch}',
-        );
-        session.bill.renderedSummaryImagePath = attachmentPath;
+        attachmentBytes = await _imageRenderService.capture(_previewKey);
+        session.bill.attachmentBytes = attachmentBytes;
       } catch (_) {
         // Rendering the summary image is best-effort; sending can still
         // proceed with a text-only message if it fails.
@@ -101,7 +98,7 @@ class _SendNotificationScreenState extends State<SendNotificationScreen> {
                 // fences would show up as literal backticks.
                 monospace: channel == NotificationChannel.whatsapp,
               ),
-        attachmentImagePath: attachmentPath,
+        attachmentBytes: attachmentBytes,
       );
     }
 

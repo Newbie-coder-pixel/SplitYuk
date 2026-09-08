@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -14,25 +16,32 @@ import '../../models/bill_item.dart';
 import '../../state/session_controller.dart';
 import '../members/pick_members_screen.dart';
 
-/// FR-2.3/FR-2.4: the OCR result must be shown fully editable, with a
-/// non-blocking warning if the reviewed total doesn't match the receipt's
-/// printed total.
 /// Which reader produced the result being reviewed. The two are not
 /// remotely equal in accuracy, and the user has to be told which one they
 /// are looking at — a silent downgrade to the on-device reader looks
 /// exactly like the AI having done a terrible job.
 enum ReceiptReadSource { ai, onDevice }
 
+/// FR-2.3/FR-2.4: the OCR result must be shown fully editable, with a
+/// non-blocking warning if the reviewed total doesn't match the receipt's
+/// printed total.
 class ReviewScannedScreen extends StatefulWidget {
   const ReviewScannedScreen({
     super.key,
     required this.imagePath,
+    required this.imageBytes,
     required this.parsed,
     this.readSource = ReceiptReadSource.ai,
     this.onRetry,
   });
 
-  final String imagePath;
+  /// Where the OS left the photo, so the session can delete it later.
+  /// Null on the web, which has no file to clean up.
+  final String? imagePath;
+
+  /// The photo itself, forwarded as the notification attachment.
+  final Uint8List imageBytes;
+
   final ParsedReceipt parsed;
   final ReceiptReadSource readSource;
 
@@ -500,6 +509,7 @@ class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
                         receiptImagePath: widget.imagePath,
                         receiptPrintedTotal: _detectedTotal,
                       );
+                      session.bill.attachmentBytes = widget.imageBytes;
                       session.setItemsFromOcr(_items);
                       session.setScannedAdjustments(
                         discount: _discount,

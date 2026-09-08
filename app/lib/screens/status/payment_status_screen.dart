@@ -43,7 +43,7 @@ class _PaymentStatusScreenState extends State<PaymentStatusScreen> {
       channel: channel,
       billTitle: session.bill.title.isEmpty ? 'SplitYuk bill' : session.bill.title,
       amountDue: amount,
-      attachmentImagePath: session.bill.attachmentImagePath,
+      attachmentBytes: session.bill.attachmentBytes,
     );
     if (!mounted) return;
     setState(() => _resending.remove(member.id));
@@ -70,10 +70,21 @@ class _PaymentStatusScreenState extends State<PaymentStatusScreen> {
       buffer.writeln('${m.name}: ${CurrencyFormatter.format(amount)} ${m.isPaid ? '(paid)' : '(unpaid)'}');
     }
 
-    final attachment = bill.attachmentImagePath;
+    final attachment = bill.attachmentBytes;
     if (attachment != null) {
+      // From memory rather than a path: the image is never written to disk
+      // (PRD §3), and XFile.fromData is what works on every platform.
       SharePlus.instance.share(
-        ShareParams(text: buffer.toString(), files: [XFile(attachment)]),
+        ShareParams(
+          text: buffer.toString(),
+          files: [
+            XFile.fromData(
+              attachment,
+              name: 'splityuk-receipt.png',
+              mimeType: 'image/png',
+            ),
+          ],
+        ),
       );
     } else {
       SharePlus.instance.share(ShareParams(text: buffer.toString()));

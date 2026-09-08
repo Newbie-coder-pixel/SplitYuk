@@ -1,0 +1,60 @@
+name: Deploy web app
+
+# Builds the Flutter web version of SplitYuk and deploys it to Vercel as a
+# static site. This is the install-free way to use the app: a URL opened in
+# Safari or Chrome, "Add to Home Screen" for an icon, and none of iOS's
+# Developer Mode / 7-day re-signing that sideloading a build requires.
+#
+# Needs three repository secrets, the same shape as deploy-relay.yml but
+# pointing at a SECOND Vercel project (the relay's own project id must not
+# be reused, or this would overwrite the API):
+#   VERCEL_TOKEN          - reuse the existing one
+#   VERCEL_ORG_ID         - reuse the existing one
+#   VERCEL_WEB_PROJECT_ID - from the new project's Settings → General
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - ".github/workflows/deploy-web.yml"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.1"
+          channel: stable
+
+      - name: Install dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: app
+        run: flutter analyze
+
+      - name: Test
+        working-directory: app
+        run: flutter test
+
+      # Without this define the app cannot reach the relay, and both the AI
+      # receipt reader and notification sending report themselves as
+      # unconfigured — the same flag the iOS build passes.
+      - name: Build web
+        working-directory: app
+        run: >
+          flutter build web --release
+          --dart-define=SPLITYUK_RELAY_URL=https://splityuk-relay.vercel.app
+
+      - name: Deploy to Vercel (production)
+        working-directory: app/build/web
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_WEB_PROJECT_ID }}
+        run: npx vercel@latest deploy --prod --yes

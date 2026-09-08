@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -52,7 +52,7 @@ class NotificationService {
     required String billTitle,
     required int amountDue,
     String? messageBody,
-    String? attachmentImagePath,
+    Uint8List? attachmentBytes,
   }) async {
     if (!isConfigured) {
       return NotifyOutcome(
@@ -89,18 +89,16 @@ class NotificationService {
         request.fields['email'] = member.email ?? '';
       }
 
-      if (attachmentImagePath != null) {
-        final file = File(attachmentImagePath);
-        if (await file.exists()) {
-          request.files.add(await http.MultipartFile.fromPath(
-            'attachment',
-            attachmentImagePath,
-            // Same reason as the receipt upload: an attachment sent as
-            // application/octet-stream is at the mercy of whatever the
-            // WhatsApp/email provider guesses it is.
-            contentType: ImageMimeType.forPath(attachmentImagePath),
-          ));
-        }
+      if (attachmentBytes != null && attachmentBytes.isNotEmpty) {
+        request.files.add(http.MultipartFile.fromBytes(
+          'attachment',
+          attachmentBytes,
+          filename: 'splityuk-receipt.png',
+          // Same reason as the receipt upload: an attachment sent as
+          // application/octet-stream is at the mercy of whatever the
+          // WhatsApp/email provider guesses it is.
+          contentType: ImageMimeType.forPath('splityuk-receipt.png'),
+        ));
       }
 
       final streamedResponse = await request.send();

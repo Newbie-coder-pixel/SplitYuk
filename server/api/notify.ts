@@ -4,6 +4,27 @@ import { sendEmail } from "../lib/email.js";
 import type { NotificationChannel, NotifyResult } from "../lib/types.js";
 
 /**
+ * The web build runs on a different origin from this relay, so the
+ * browser will not let the page read a response without these. The mobile
+ * builds never needed them, which is exactly why their absence would only
+ * show up on the web — as an opaque network failure.
+ *
+ * A wildcard origin is safe here: every endpoint is authenticated by a
+ * random installation token in the body, there are no cookies, and
+ * nothing is stored per-origin (PRD §12).
+ */
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Max-Age": "86400",
+};
+
+export async function OPTIONS(): Promise<Response> {
+  return new Response(null, { status: 204, headers: CORS_HEADERS });
+}
+
+/**
  * The one endpoint this whole backend has: relay a single notification.
  *
  * Deliberately stateless with respect to content (PRD §12) — nothing here
@@ -17,6 +38,8 @@ import type { NotificationChannel, NotifyResult } from "../lib/types.js";
 // Vercel's Node.js runtime routes requests to the named export matching the
 // HTTP method (not a generic default export) — GET/PUT/etc. get a 405 from
 // the platform itself before this file is even reached.
+
+
 export async function POST(req: Request): Promise<Response> {
   let form: FormData;
   try {
@@ -132,6 +155,6 @@ function str(value: FormDataEntryValue | null): string | undefined {
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
   });
 }

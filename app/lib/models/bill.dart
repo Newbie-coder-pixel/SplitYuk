@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'bill_item.dart';
 import 'split_mode.dart';
 
@@ -51,13 +53,20 @@ class Bill {
   /// memberId -> exact amount, used when [splitMode] is [SplitMode.customAmount].
   final Map<String, int> customAmounts;
 
-  /// Kept in memory only to attach to the outgoing notification (FR-2.5);
-  /// never re-uploaded or persisted beyond the session.
+  /// Where the OS put the camera/gallery photo, so it can be deleted when
+  /// the session ends (PRD §17). Not used to read the image — see
+  /// [attachmentBytes] — and null on the web build, which has no
+  /// filesystem to leave a copy on in the first place.
   String? receiptImagePath;
 
-  /// For manual-entry bills (no original photo): an on-device-rendered
-  /// summary image (FR-3.3), generated once the split is finalized.
-  String? renderedSummaryImagePath;
+  /// The image attached to outgoing notifications (FR-7.2), held in memory
+  /// for the session only: the receipt photo for a scanned bill, or the
+  /// rendered summary (FR-3.3) for a manual one.
+  ///
+  /// Bytes rather than a path so nothing has to be re-read from disk at
+  /// send time — which is what lets the same code run on the web, and
+  /// means there is one less on-disk copy of a receipt to clean up.
+  Uint8List? attachmentBytes;
 
   /// The total OCR read directly off the receipt, for the mismatch check
   /// in FR-2.4. Null for manual entry.
@@ -93,10 +102,6 @@ class Bill {
 
   bool get hasUnassignedItems => items.any((item) => !item.isAssigned);
 
-  /// The image attached to outgoing notifications (FR-7.2): the original
-  /// receipt for a scanned bill, or the rendered summary for a manual one.
-  String? get attachmentImagePath =>
-      source == BillSource.scan ? receiptImagePath : renderedSummaryImagePath;
 
   void unassignMemberEverywhere(String memberId) {
     for (final item in items) {

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -16,6 +18,10 @@ import 'package:splityuk_app/screens/send/send_notification_screen.dart';
 import 'package:splityuk_app/screens/split/split_summary_screen.dart';
 import 'package:splityuk_app/screens/status/payment_status_screen.dart';
 import 'package:splityuk_app/state/session_controller.dart';
+
+/// Stand-in for the receipt photo. These tests are about layout and
+/// wiring, not image content.
+final Uint8List _fakeImage = Uint8List.fromList(const [0xFF, 0xD8, 0xFF, 0x00]);
 
 /// These pump every screen directly (bypassing navigation) with a
 /// realistic populated session, so a build/layout crash on any screen —
@@ -106,7 +112,7 @@ void main() {
     await _pump(
       tester,
       SessionController(),
-      ReviewScannedScreen(imagePath: '/tmp/receipt.jpg', parsed: parsed),
+      ReviewScannedScreen(imagePath: '/tmp/receipt.jpg', imageBytes: _fakeImage, parsed: parsed),
       surfaceSize: const Size(390, 3000),
     );
 
@@ -146,7 +152,7 @@ void main() {
     await _pump(
       tester,
       SessionController(),
-      ReviewScannedScreen(imagePath: '/tmp/receipt.jpg', parsed: parsed),
+      ReviewScannedScreen(imagePath: '/tmp/receipt.jpg', imageBytes: _fakeImage, parsed: parsed),
       surfaceSize: const Size(390, 3000),
     );
 
@@ -177,6 +183,7 @@ void main() {
       SessionController(),
       ReviewScannedScreen(
         imagePath: '/tmp/receipt.jpg',
+        imageBytes: _fakeImage,
         parsed: parsed,
         readSource: ReceiptReadSource.onDevice,
         onRetry: () {},
@@ -198,7 +205,7 @@ void main() {
     await _pump(
       tester,
       SessionController(),
-      ReviewScannedScreen(imagePath: '/tmp/receipt.jpg', parsed: parsed),
+      ReviewScannedScreen(imagePath: '/tmp/receipt.jpg', imageBytes: _fakeImage, parsed: parsed),
       surfaceSize: const Size(390, 3000),
     );
 

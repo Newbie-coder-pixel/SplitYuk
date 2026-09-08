@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -39,7 +40,7 @@ class AiReceiptService {
 
   bool get isConfigured => relayBaseUrl != null && relayBaseUrl!.trim().isNotEmpty;
 
-  Future<AiReceiptOutcome> parseReceipt(String imagePath) async {
+  Future<AiReceiptOutcome> parseReceipt(Uint8List imageBytes, {required String filename}) async {
     if (!isConfigured) {
       return const AiReceiptOutcome(error: 'AI relay not configured.');
     }
@@ -49,12 +50,13 @@ class AiReceiptService {
       final uri = Uri.parse('${relayBaseUrl!}/api/parse-receipt');
       final request = http.MultipartRequest('POST', uri)
         ..fields['installationToken'] = token
-        ..files.add(await http.MultipartFile.fromPath(
+        ..files.add(http.MultipartFile.fromBytes(
           'image',
-          imagePath,
+          imageBytes,
+          filename: filename,
           // Without this the part is sent as application/octet-stream and
           // Gemini refuses it as raw binary instead of reading the receipt.
-          contentType: ImageMimeType.forPath(imagePath),
+          contentType: ImageMimeType.forPath(filename),
         ));
 
       final streamedResponse = await request.send();
