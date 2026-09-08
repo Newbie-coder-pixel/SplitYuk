@@ -3,11 +3,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
 import 'package:splityuk_app/core/theme/app_theme.dart';
+import 'package:splityuk_app/logic/receipt_parser.dart';
+import 'package:splityuk_app/models/bill_item.dart';
 import 'package:splityuk_app/models/split_mode.dart';
 import 'package:splityuk_app/screens/assignment/item_assignment_screen.dart';
 import 'package:splityuk_app/screens/create/choose_input_screen.dart';
 import 'package:splityuk_app/screens/create/manual_entry_screen.dart';
 import 'package:splityuk_app/screens/members/pick_members_screen.dart';
+import 'package:splityuk_app/screens/scan/review_scanned_screen.dart';
 import 'package:splityuk_app/screens/scan/scan_receipt_screen.dart';
 import 'package:splityuk_app/screens/send/send_notification_screen.dart';
 import 'package:splityuk_app/screens/split/split_summary_screen.dart';
@@ -18,11 +21,18 @@ import 'package:splityuk_app/state/session_controller.dart';
 /// realistic populated session, so a build/layout crash on any screen —
 /// a null lookup, a RenderFlex overflow, a bad Provider wire-up — fails
 /// here instead of only showing up on a real device.
-Future<void> _pump(WidgetTester tester, SessionController session, Widget screen) async {
+Future<void> _pump(
+  WidgetTester tester,
+  SessionController session,
+  Widget screen, {
+  Size surfaceSize = const Size(1080, 4000),
+}) async {
   // A tall surface so every screen's content renders without needing to
   // scroll a lazy sliver list into view first — this test is about
-  // catching build/layout crashes, not scroll behavior.
-  tester.view.physicalSize = const Size(1080, 4000);
+  // catching build/layout crashes, not scroll behavior. Pass a narrower
+  // [surfaceSize] to check a screen at a real phone's width, where a row
+  // of fixed-width columns is far likelier to overflow.
+  tester.view.physicalSize = surfaceSize;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
@@ -69,6 +79,66 @@ void main() {
   testWidgets('ScanReceiptScreen builds', (tester) async {
     await _pump(tester, SessionController(), const ScanReceiptScreen());
     expect(find.text('Take a photo'), findsOneWidget);
+  });
+
+  testWidgets('ReviewScannedScreen renders a full receipt with quantities and a discount',
+      (tester) async {
+    // The real scanned receipt from receipt_parser_test.dart: eight lines,
+    // a 276.660 discount, and a printed total of 260.940. Rendering it at
+    // a phone's width is the check that matters — the qty/name/amount
+    // columns and the per-row buttons all have to fit next to a long
+    // product name without a RenderFlex overflow.
+    final parsed = ParsedReceipt(
+      items: [
+        BillItem(id: 'i1', name: 'Paper Bag Red S', price: 3000),
+        BillItem(id: 'i2', name: 'Flower Language Series Succulent', price: 39900),
+        BillItem(id: 'i3', name: 'MIKKO Collection Ankle Socks (1', price: 29900),
+        BillItem(id: 'i4', name: 'MIKKO Dress Series Drip Glue Des', price: 79900),
+        BillItem(id: 'i5', name: 'Cinnamoroll Lotion Bottle 45ml', price: 17900),
+        BillItem(id: 'i6', name: 'Paper Bag Red M', price: 7200, quantity: 2),
+        BillItem(id: 'i7', name: 'Harry Potter Plastic Tumbler wit', price: 179900),
+        BillItem(id: 'i8', name: 'Harry Potter Plastic Tumbler wit', price: 179900),
+      ],
+      detectedTotal: 260940,
+      discount: 276660,
+    );
+
+    await _pump(
+      tester,
+      SessionController(),
+      ReviewScannedScreen(imagePath: '/tmp/receipt.jpg', parsed: parsed),
+      surfaceSize: const Size(390, 3000),
+    );
+
+    expect(find.text('QTY'), findsOneWidget);
+    expect(find.text('ITEM'), findsOneWidget);
+    expect(find.text('AMOUNT'), findsOneWidget);
+    expect(find.text('8 lines · 9 items'), findsOneWidget);
+
+    // The discount is shown as a deduction, and the total is the amount
+    // actually owed — so it matches the receipt and no mismatch warning
+    // fires.
+    expect(find.text('Discount'), findsOneWidget);
+    expect(find.text('- Rp 276.660'), findsOneWidget);
+    expect(find.text('Rp 260.940'), findsOneWidget);
+    expect(find.text('Total mismatch detected'), findsNothing);
+  });
+
+  testWidgets('ReviewScannedScreen warns when the items do not reach the printed total',
+      (tester) async {
+    final parsed = ParsedReceipt(
+      items: [BillItem(id: 'i1', name: 'Kopi Susu', price: 25000)],
+      detectedTotal: 90000,
+    );
+
+    await _pump(
+      tester,
+      SessionController(),
+      ReviewScannedScreen(imagePath: '/tmp/receipt.jpg', parsed: parsed),
+      surfaceSize: const Size(390, 3000),
+    );
+
+    expect(find.text('Total mismatch detected'), findsOneWidget);
   });
 
   testWidgets('ManualEntryScreen builds in both itemized and total-only modes', (tester) async {

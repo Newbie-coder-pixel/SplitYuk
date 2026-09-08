@@ -94,7 +94,13 @@ class AiReceiptService {
           final name = entry['name'];
           final price = entry['price'];
           if (name is String && name.trim().isNotEmpty && price is num && price > 0) {
-            items.add(BillItem(id: IdGenerator.next('item'), name: name.trim(), price: price.round()));
+            final quantity = entry['quantity'];
+            items.add(BillItem(
+              id: IdGenerator.next('item'),
+              name: name.trim(),
+              price: price.round(),
+              quantity: quantity is num && quantity >= 1 ? quantity.round() : 1,
+            ));
           }
         }
       }

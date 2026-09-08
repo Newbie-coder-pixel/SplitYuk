@@ -27,6 +27,20 @@ class ReviewScannedScreen extends StatefulWidget {
   State<ReviewScannedScreen> createState() => _ReviewScannedScreenState();
 }
 
+/// Column widths shared by the header and every item row, so the two stay
+/// aligned — a header that doesn't line up with its rows is worse than no
+/// header at all when you're checking a list against a paper receipt.
+const double _qtyColumnWidth = 28;
+
+/// Wide enough for both icon buttons at [_actionButtonSize] each.
+///
+/// The size is set explicitly, tap target included: an IconButton's
+/// default 48px tap target ignores a smaller icon and silently overflowed
+/// this column on a phone-width screen. 40px stays a comfortable target
+/// while leaving the item name room to breathe on a dense receipt.
+const double _actionButtonSize = 40;
+const double _actionsColumnWidth = _actionButtonSize * 2;
+
 class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
   late List<BillItem> _items;
   int? _detectedTotal;
@@ -45,6 +59,10 @@ class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
   }
 
   int get _reviewedSubtotal => _items.fold(0, (sum, item) => sum + item.price);
+
+  /// Units bought, not lines printed — "8 lines · 9 items" is the quickest
+  /// way to notice a quantity the scan read as 1.
+  int get _totalUnits => _items.fold(0, (sum, item) => sum + item.quantity);
 
   /// What the group actually owes: items, less any discount, plus anything
   /// charged on top. This — not the raw item subtotal — is what has to
@@ -85,12 +103,17 @@ class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.large)),
       ),
-      builder: (_) => _ItemEditSheet(initialName: item.name, initialPrice: item.price),
+      builder: (_) => _ItemEditSheet(
+        initialName: item.name,
+        initialPrice: item.price,
+        initialQuantity: item.quantity,
+      ),
     );
     if (result == null) return;
     setState(() {
       item.name = result.name;
       item.price = result.price;
+      item.quantity = result.quantity;
     });
   }
 
@@ -102,7 +125,7 @@ class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.large)),
       ),
-      builder: (_) => const _ItemEditSheet(initialName: '', initialPrice: 0),
+      builder: (_) => const _ItemEditSheet(initialName: '', initialPrice: 0, initialQuantity: 1),
     );
     if (result == null || result.name.trim().isEmpty) return;
     setState(() {
@@ -110,6 +133,7 @@ class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
         id: 'reviewed_${DateTime.now().microsecondsSinceEpoch}',
         name: result.name,
         price: result.price,
+        quantity: result.quantity,
       ));
     });
   }
@@ -137,9 +161,45 @@ class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Text('LINE ITEMS', style: AppTypography.eyebrow),
+                  Row(
+                    children: [
+                      const Text('LINE ITEMS', style: AppTypography.eyebrow),
+                      const Spacer(),
+                      Flexible(
+                        child: Text(
+                          '${_items.length} ${_items.length == 1 ? 'line' : 'lines'}'
+                          ' · $_totalUnits ${_totalUnits == 1 ? 'item' : 'items'}',
+                          style: AppTypography.bodySecondary,
+                          textAlign: TextAlign.end,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: AppSpacing.sm),
                   const DashedLine(),
+                  // A column header in the same order the receipt prints
+                  // them, so the list can be read straight down against the
+                  // paper it came from.
+                  if (_items.isNotEmpty) ...[
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: _qtyColumnWidth,
+                            child: Text('QTY', style: AppTypography.eyebrow),
+                          ),
+                          Expanded(child: Text('ITEM', style: AppTypography.eyebrow)),
+                          Text('AMOUNT', style: AppTypography.eyebrow),
+                          // Keeps the header aligned with the edit/remove
+                          // buttons on each row below.
+                          SizedBox(width: _actionsColumnWidth),
+                        ],
+                      ),
+                    ),
+                    const DashedLine(),
+                  ],
                   const SizedBox(height: AppSpacing.sm),
                   if (_items.isEmpty)
                     const Padding(
@@ -154,21 +214,67 @@ class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
                       (item) => Padding(
                         padding: const EdgeInsets.symmetric(vertical: 6),
                         child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Expanded(child: Text(item.name, style: AppTypography.body)),
-                            Text(
-                              CurrencyFormatter.format(item.price),
-                              style: AppTypography.amount,
+                            SizedBox(
+                              width: _qtyColumnWidth,
+                              child: Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: Text(
+                                  '${item.quantity}',
+                                  style: AppTypography.body.copyWith(
+                                    color: AppColors.textSecondary,
+                                    fontFeatures: const [FontFeature.tabularFigures()],
+                                  ),
+                                ),
+                              ),
                             ),
-                            IconButton(
-                              icon: const Icon(Icons.edit_outlined, size: 18),
-                              color: AppColors.textSecondary,
-                              onPressed: () => _editItem(item),
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.only(top: 2, right: AppSpacing.sm),
+                                child: Text(item.name, style: AppTypography.body),
+                              ),
                             ),
-                            IconButton(
-                              icon: const Icon(Icons.close, size: 18),
-                              color: AppColors.textSecondary,
-                              onPressed: () => setState(() => _items.remove(item)),
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Text(
+                                CurrencyFormatter.format(item.price),
+                                style: AppTypography.amount,
+                              ),
+                            ),
+                            SizedBox(
+                              width: _actionsColumnWidth,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.edit_outlined, size: 18),
+                                    color: AppColors.textSecondary,
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints.tightFor(
+                                      width: _actionButtonSize,
+                                      height: _actionButtonSize,
+                                    ),
+                                    style: IconButton.styleFrom(
+                                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                    onPressed: () => _editItem(item),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.close, size: 18),
+                                    color: AppColors.textSecondary,
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints.tightFor(
+                                      width: _actionButtonSize,
+                                      height: _actionButtonSize,
+                                    ),
+                                    style: IconButton.styleFrom(
+                                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                    onPressed: () => setState(() => _items.remove(item)),
+                                  ),
+                                ],
+                              ),
                             ),
                           ],
                         ),
@@ -435,15 +541,21 @@ class _AdjustmentsSheetState extends State<_AdjustmentsSheet> {
 }
 
 class _ItemEditResult {
-  const _ItemEditResult(this.name, this.price);
+  const _ItemEditResult(this.name, this.price, this.quantity);
   final String name;
   final int price;
+  final int quantity;
 }
 
 class _ItemEditSheet extends StatefulWidget {
-  const _ItemEditSheet({required this.initialName, required this.initialPrice});
+  const _ItemEditSheet({
+    required this.initialName,
+    required this.initialPrice,
+    required this.initialQuantity,
+  });
   final String initialName;
   final int initialPrice;
+  final int initialQuantity;
 
   @override
   State<_ItemEditSheet> createState() => _ItemEditSheetState();
@@ -454,11 +566,14 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
       TextEditingController(text: widget.initialName);
   late final TextEditingController _priceController =
       TextEditingController(text: widget.initialPrice == 0 ? '' : widget.initialPrice.toString());
+  late final TextEditingController _quantityController =
+      TextEditingController(text: widget.initialQuantity.toString());
 
   @override
   void dispose() {
     _nameController.dispose();
     _priceController.dispose();
+    _quantityController.dispose();
     super.dispose();
   }
 
@@ -482,17 +597,44 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
             decoration: const InputDecoration(labelText: 'Item name'),
           ),
           const SizedBox(height: AppSpacing.md),
-          TextField(
-            controller: _priceController,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Amount (Rp)'),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 96,
+                child: TextField(
+                  controller: _quantityController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'Qty'),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: TextField(
+                  controller: _priceController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'Line total (Rp)'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          const Text(
+            'Enter what the line costs in total, not the price of one — the quantity '
+            'is shown so you can check it against the receipt.',
+            style: AppTypography.bodySecondary,
           ),
           const SizedBox(height: AppSpacing.lg),
           PrimaryButton(
             label: 'Save',
             onPressed: () {
               final price = int.tryParse(_priceController.text) ?? 0;
-              Navigator.of(context).pop(_ItemEditResult(_nameController.text.trim(), price));
+              final quantity = int.tryParse(_quantityController.text.trim()) ?? 1;
+              Navigator.of(context).pop(_ItemEditResult(
+                _nameController.text.trim(),
+                price,
+                quantity < 1 ? 1 : quantity,
+              ));
             },
           ),
         ],

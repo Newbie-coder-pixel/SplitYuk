@@ -132,6 +132,44 @@ void main() {
       expect(result.reconciledTotal, 42000);
     });
 
+    test('reads the printed quantity, wherever the layout puts it', () {
+      // Left column, right column, glued to the multiplier, or absent —
+      // the quantity is what a person scans down to check the list
+      // against the paper, so it has to survive all four.
+      Map<String, int> quantitiesOf(String text) => {
+            for (final item in ReceiptParser.parse(text).items) item.name: item.quantity,
+          };
+
+      expect(
+        quantitiesOf('2 Nasi Goreng 40.000\n1 Es Teh Manis 8.000'),
+        {'Nasi Goreng': 2, 'Es Teh Manis': 1},
+      );
+      expect(
+        quantitiesOf('Paper Bag Red M\n20154550101063600    2    7200'),
+        {'Paper Bag Red M': 2},
+      );
+      expect(
+        quantitiesOf('3x Indomie Goreng          10.500'),
+        {'Indomie Goreng': 3},
+      );
+      expect(
+        quantitiesOf('Nasi Goreng    2 x 25.000    50.000'),
+        {'Nasi Goreng': 2},
+      );
+      expect(
+        quantitiesOf('Kopi Susu 25.000'),
+        {'Kopi Susu': 1},
+        reason: 'a line with no quantity column means one of it',
+      );
+    });
+
+    test('a quantity is never mistaken for the price, or the price for a quantity', () {
+      final result = ReceiptParser.parse('Paper Bag Red M\n20154550101063600    2    7200');
+
+      expect(result.items.single.price, 7200);
+      expect(result.items.single.quantity, 2);
+    });
+
     test('tax and service charged on top are captured as amounts', () {
       const text = 'Nasi Goreng             50.000\n'
           'Subtotal                50.000\n'

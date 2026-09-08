@@ -45,10 +45,17 @@ class PrimaryButton extends StatelessWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(
-                  label,
-                  style: AppTypography.buttonLabel.copyWith(
-                    color: disabled ? AppColors.textSecondary : AppColors.textOnAccent,
+                // Flexible, not a bare Text: a long label next to the icon
+                // overflows the row on a narrow phone, which paints the
+                // black-and-yellow stripes across the main CTA.
+                Flexible(
+                  child: Text(
+                    label,
+                    textAlign: TextAlign.center,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTypography.buttonLabel.copyWith(
+                      color: disabled ? AppColors.textSecondary : AppColors.textOnAccent,
+                    ),
                   ),
                 ),
                 if (icon != null) ...[

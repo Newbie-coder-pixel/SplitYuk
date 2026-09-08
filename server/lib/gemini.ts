@@ -1,6 +1,8 @@
 export interface ParsedReceiptItem {
   name: string;
+  /** The line total — quantity already multiplied in, never a unit price. */
   price: number;
+  quantity?: number;
 }
 
 export interface GeminiParseResult {
@@ -61,6 +63,7 @@ const RECEIPT_SCHEMA = {
         properties: {
           name: { type: "string" },
           price: { type: "integer" },
+          quantity: { type: "integer" },
         },
         required: ["name", "price"],
       },
@@ -83,11 +86,15 @@ const PROMPT =
   "set isReceipt to true and extract EVERY purchased line item — do not " +
   "stop early, do not summarise, do not merge two products into one line, " +
   "and do not skip a line just because its description is truncated or " +
-  "hard to read. For each item give its exact printed name and its final " +
-  "line price as a plain integer number of Rupiah — no currency symbol, no " +
-  "thousands separators, no decimals. When a line shows a quantity and a " +
-  "unit price, the price you return is the line total (quantity times unit " +
-  "price), not the unit price. Never include barcodes, product/goods " +
+  "hard to read. For each item give its exact printed name, its printed " +
+  "quantity as 'quantity' (a whole number — use 1 when the line shows no " +
+  "quantity), and its final line price as a plain integer number of " +
+  "Rupiah — no currency symbol, no thousands separators, no decimals. When " +
+  "a line shows a quantity and a unit price, the price you return is the " +
+  "line total (quantity times unit price), not the unit price. The " +
+  "quantity is reported alongside it so a person can tick the items off " +
+  "against the paper receipt; it must never be folded into the name. " +
+  "Never include barcodes, product/goods " +
   "codes, loyalty or member numbers, cashier/POS/serial metadata, " +
   "subtotal/tax/service/discount lines, payment method lines (e.g. a bank " +
   "name), or change/kembali lines as items. If a printed grand total is " +

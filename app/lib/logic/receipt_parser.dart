@@ -216,6 +216,10 @@ class ReceiptParser {
     final run = <String>[];
     final multipliedAt = <int>{};
 
+    // A quantity seen before its item was described, e.g. the leading "2"
+    // of "2 Nasi Goreng 40.000".
+    int? pendingQuantity;
+
     void flushRun() {
       if (run.isEmpty) return;
       final tokens = List.of(run);
@@ -233,7 +237,13 @@ class ReceiptParser {
           break;
         }
       }
-      if (amount == null) return;
+      if (amount == null) {
+        // A run that is nothing but a small number is the quantity column
+        // of the item about to be described ("2 Nasi Goreng 40.000").
+        // Remember it rather than discarding it outright.
+        if (tokens.length == 1) pendingQuantity = _quantityFrom(tokens.first);
+        return;
+      }
 
       // Everything after the line amount belongs to the *next* item — most
       // often its leading quantity, in the "2 Nasi Goreng 40.000" layout
@@ -241,20 +251,41 @@ class ReceiptParser {
       // instead of letting it swallow this item.
       run.addAll(tokens.sublist(amountIndex + 1));
 
+      // The column just left of the amount is the quantity, when it looks
+      // like one — in "20154550101063600  2  7200" that's the 2, and in
+      // "2015…  1  3000" it's the 1. A goods code sitting there instead is
+      // far too long to be mistaken for a count.
+      final columnQuantity = amountIndex >= 1 ? _quantityFrom(tokens[amountIndex - 1]) : null;
+
+      // In "2 x 25.000  50.000" the quantity isn't next to the line total
+      // at all — it sits in front of the multiplier, with the unit price
+      // in between. Look there before giving up and assuming one.
+      int? markerQuantity;
+      for (final marker in markers) {
+        if (marker >= 1 && marker <= amountIndex) {
+          markerQuantity = _quantityFrom(tokens[marker - 1]) ?? markerQuantity;
+        }
+      }
+
+      final quantity = columnQuantity ?? markerQuantity ?? pendingQuantity ?? 1;
+      pendingQuantity = null;
+
       // "2 x 25.000" with no separate amount column: the price of the line
       // is quantity times unit price, not the unit price.
       var price = amount;
-      if (markers.contains(amountIndex) && amountIndex >= 1) {
-        final quantity = _quantityFrom(tokens[amountIndex - 1]);
-        if (quantity != null) {
-          final multiplied = quantity * amount;
-          if (multiplied <= _maxAmount) price = multiplied;
-        }
+      if (markers.contains(amountIndex) && columnQuantity != null && columnQuantity > 1) {
+        final multiplied = columnQuantity * amount;
+        if (multiplied <= _maxAmount) price = multiplied;
       }
 
       final name = nameTokens.join(' ').trim();
       if (name.isNotEmpty) {
-        items.add(BillItem(id: IdGenerator.next('item'), name: name, price: price));
+        items.add(BillItem(
+          id: IdGenerator.next('item'),
+          name: name,
+          price: price,
+          quantity: quantity,
+        ));
       } else if (amountIndex > 0 && _digitsOnly(tokens.first).length >= _productCodeDigits) {
         // No readable description, but a goods code and an amount in the
         // right columns is strong evidence of a real purchased line. Keep
@@ -264,6 +295,7 @@ class ReceiptParser {
           id: IdGenerator.next('item'),
           name: 'Item ${items.length + 1}',
           price: price,
+          quantity: quantity,
         ));
       }
 
@@ -277,6 +309,7 @@ class ReceiptParser {
       multipliedAt.clear();
       nameTokens.clear();
       nameLine = null;
+      pendingQuantity = null;
       awaitingTotalAmount = false;
     }
 
@@ -455,7 +488,7 @@ class ReceiptParser {
   static int? _quantityFrom(String token) {
     if (!RegExp(r'^\d{1,3}$').hasMatch(token)) return null;
     final value = int.tryParse(token);
-    if (value == null || value < 2 || value > _maxQuantity) return null;
+    if (value == null || value < 1 || value > _maxQuantity) return null;
     return value;
   }
 
