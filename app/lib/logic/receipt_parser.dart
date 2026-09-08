@@ -2,13 +2,38 @@ import '../core/utils/id_generator.dart';
 import '../models/bill_item.dart';
 
 class ParsedReceipt {
-  const ParsedReceipt({required this.items, this.detectedTotal});
+  const ParsedReceipt({
+    required this.items,
+    this.detectedTotal,
+    this.discount = 0,
+    this.tax = 0,
+    this.serviceCharge = 0,
+  });
 
   final List<BillItem> items;
 
   /// The total as printed on the receipt, if a "Total" line was detected —
   /// used for the FR-2.4 mismatch check against the reviewed items.
   final int? detectedTotal;
+
+  /// Discounts/vouchers printed on the receipt, as a positive Rupiah
+  /// amount to subtract. Without this a discounted receipt always looks
+  /// like a total mismatch, and every member gets charged the undiscounted
+  /// price.
+  final int discount;
+
+  /// Tax and service charged *on top* of the item prices. Both are zero on
+  /// a receipt whose printed prices already include them — adding them
+  /// again would overcharge the group.
+  final int tax;
+  final int serviceCharge;
+
+  /// What the items and extras actually add up to: the figure to compare
+  /// against [detectedTotal], and what each member's shares must sum to.
+  int get reconciledTotal =>
+      items.fold<int>(0, (sum, item) => sum + item.price) - discount + tax + serviceCharge;
+
+  bool get hasExtras => discount != 0 || tax != 0 || serviceCharge != 0;
 }
 
 /// Turns raw OCR text into candidate line items. This is a heuristic, not
@@ -121,13 +146,27 @@ class ReceiptParser {
     caseSensitive: false,
   );
 
+  /// Lines that carry a bill-level adjustment rather than an item. They
+  /// are still skipped as items, but their amount is now captured instead
+  /// of thrown away — a discounted receipt whose discount is ignored looks
+  /// like a total mismatch and overcharges every member.
+  static final RegExp _discountLine =
+      RegExp(r'\b(discount|diskon|voucher|potongan|promo)\b', caseSensitive: false);
+  static final RegExp _taxLine = RegExp(r'\b(tax|pajak|ppn|pb1)\b', caseSensitive: false);
+  static final RegExp _serviceLine =
+      RegExp(r'\b(service|servis|svc)\b', caseSensitive: false);
+
+  /// A minus sign, or the brackets some POS software wraps a deduction in.
+  static final RegExp _deductionMarkers = RegExp(r'^[-(]+|[)]+$');
+
   /// Lines that are receipt metadata/noise, never an item — matched
   /// against the whole line so a keyword anywhere on it is enough to
   /// discard it (and to act as a barrier: metadata never continues onto
   /// the next line as part of a product description, and a number below it
   /// never belongs to a product above it).
   static final RegExp _skipLine = RegExp(
-    r'\b(subtotal|sub-total|pajak|tax|ppn|pb1|service|svc|discount|diskon|'
+    r'\b(subtotal|sub-total|pajak|tax|ppn|pb1|service|servis|svc|discount|'
+    r'diskon|voucher|potongan|promo|'
     r'change|kembali|cash|tunai|bayar|debit|kredit|credit|visa|mastercard|'
     r'\bbca\b|\bbni\b|\bbri\b|mandiri|cimb|permata|danamon|\bbtn\b|ovo|gopay|'
     r'\bdana\b|shopeepay|linkaja|\bqris\b|\bpembayaran\b|metode\s*bayar|'
@@ -161,6 +200,9 @@ class ReceiptParser {
 
     final items = <BillItem>[];
     int? total;
+    var discount = 0;
+    var tax = 0;
+    var serviceCharge = 0;
     bool awaitingTotalAmount = false;
 
     // The description candidate for the next numeric run, plus the index
@@ -274,6 +316,20 @@ class ReceiptParser {
 
       if (_skipLine.hasMatch(line)) {
         barrier();
+        // Not an item, but some of these carry a bill-level amount worth
+        // keeping. A line with no readable amount (e.g. "TAX-Excl  9",
+        // where 9 is a rate, not money) contributes nothing — which is
+        // right: on that receipt the printed prices already include tax.
+        final amount = _adjustmentAmountOn(lineTokens);
+        if (amount != null) {
+          if (_discountLine.hasMatch(line)) {
+            discount += amount;
+          } else if (_taxLine.hasMatch(line)) {
+            tax += amount;
+          } else if (_serviceLine.hasMatch(line)) {
+            serviceCharge += amount;
+          }
+        }
         continue;
       }
 
@@ -322,7 +378,27 @@ class ReceiptParser {
 
     flushRun();
 
-    return ParsedReceipt(items: items, detectedTotal: total);
+    return ParsedReceipt(
+      items: items,
+      detectedTotal: total,
+      discount: discount,
+      tax: tax,
+      serviceCharge: serviceCharge,
+    );
+  }
+
+  /// The Rupiah amount on a discount/tax/service line, if it has one.
+  /// Deductions are read as magnitudes, so "-5.000" and "(5.000)" both
+  /// give 5000 — the caller already knows which direction it applies.
+  static int? _adjustmentAmountOn(List<String> lineTokens) {
+    for (var i = lineTokens.length - 1; i >= 0; i--) {
+      final bare = lineTokens[i].replaceAll(_deductionMarkers, '');
+      final numeric = _asNumeric(bare);
+      if (numeric == null) continue;
+      final amount = _amountFrom(numeric);
+      if (amount != null) return amount;
+    }
+    return null;
   }
 
   /// Splits a token that glues a quantity or a marker onto its neighbour

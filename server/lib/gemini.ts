@@ -8,6 +8,11 @@ export interface GeminiParseResult {
   reason?: string;
   items: ParsedReceiptItem[];
   detectedTotal?: number;
+  /** Positive Rupiah amount to subtract (discounts, vouchers, promos). */
+  discount?: number;
+  /** Charged on top of the item prices; 0 when prices already include it. */
+  tax?: number;
+  serviceCharge?: number;
 }
 
 interface GeminiOutcome {
@@ -61,6 +66,9 @@ const RECEIPT_SCHEMA = {
       },
     },
     detectedTotal: { type: "integer" },
+    discount: { type: "integer" },
+    tax: { type: "integer" },
+    serviceCharge: { type: "integer" },
   },
   required: ["isReceipt", "items"],
 };
@@ -83,8 +91,22 @@ const PROMPT =
   "codes, loyalty or member numbers, cashier/POS/serial metadata, " +
   "subtotal/tax/service/discount lines, payment method lines (e.g. a bank " +
   "name), or change/kembali lines as items. If a printed grand total is " +
-  "visible, extract it as detectedTotal as a plain integer. Respond with " +
-  "only the structured JSON, nothing else.";
+  "visible, extract it as detectedTotal as a plain integer.\n\n" +
+  "Bill-level adjustments matter as much as the items, because the group " +
+  "splits the real amount paid, not the list price. Report them as plain " +
+  "positive integers: 'discount' is every discount, voucher, promo or " +
+  "'Discount Price' deduction added together; 'tax' and 'serviceCharge' " +
+  "are amounts charged ON TOP of the item prices. Report tax and " +
+  "serviceCharge as 0 when the receipt's printed item prices already " +
+  "include them (Indonesian receipts often print a tax-inclusive total, " +
+  "sometimes shown as a 'TAX-Excl' breakdown of a total already paid) — " +
+  "adding them again would overcharge the group. Never report a tax RATE " +
+  "(a percentage like 11) in these fields; they are money amounts only.\n\n" +
+  "Before answering, check your own numbers: sum(item prices) - discount + " +
+  "tax + serviceCharge must equal detectedTotal. If it doesn't, re-read " +
+  "the receipt and correct whichever part you got wrong — a missed item, a " +
+  "missed discount, or a tax you added that was already included. " +
+  "Respond with only the structured JSON, nothing else.";
 
 const SUPPORTED_IMAGE_TYPES = new Set([
   "image/jpeg",
@@ -414,7 +436,9 @@ function isValidParseResult(value: unknown): value is GeminiParseResult {
     const it = item as Record<string, unknown>;
     if (typeof it.name !== "string" || typeof it.price !== "number") return false;
   }
-  if (v.detectedTotal !== undefined && typeof v.detectedTotal !== "number") return false;
+  for (const numeric of ["detectedTotal", "discount", "tax", "serviceCharge"]) {
+    if (v[numeric] !== undefined && typeof v[numeric] !== "number") return false;
+  }
   if (v.reason !== undefined && typeof v.reason !== "string") return false;
   return true;
 }

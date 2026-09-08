@@ -30,18 +30,52 @@ class ReviewScannedScreen extends StatefulWidget {
 class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
   late List<BillItem> _items;
   int? _detectedTotal;
+  late int _discount;
+  late int _tax;
+  late int _serviceCharge;
 
   @override
   void initState() {
     super.initState();
     _items = List.of(widget.parsed.items);
     _detectedTotal = widget.parsed.detectedTotal;
+    _discount = widget.parsed.discount;
+    _tax = widget.parsed.tax;
+    _serviceCharge = widget.parsed.serviceCharge;
   }
 
   int get _reviewedSubtotal => _items.fold(0, (sum, item) => sum + item.price);
 
-  bool get _hasMismatch =>
-      _detectedTotal != null && _detectedTotal != _reviewedSubtotal;
+  /// What the group actually owes: items, less any discount, plus anything
+  /// charged on top. This — not the raw item subtotal — is what has to
+  /// match the receipt's printed total.
+  int get _reviewedTotal => _reviewedSubtotal - _discount + _tax + _serviceCharge;
+
+  bool get _hasAdjustments => _discount != 0 || _tax != 0 || _serviceCharge != 0;
+
+  bool get _hasMismatch => _detectedTotal != null && _detectedTotal != _reviewedTotal;
+
+  Future<void> _editAdjustments() async {
+    final result = await showModalBottomSheet<_AdjustmentsResult>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.bgSurface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.large)),
+      ),
+      builder: (_) => _AdjustmentsSheet(
+        discount: _discount,
+        tax: _tax,
+        serviceCharge: _serviceCharge,
+      ),
+    );
+    if (result == null) return;
+    setState(() {
+      _discount = result.discount;
+      _tax = result.tax;
+      _serviceCharge = result.serviceCharge;
+    });
+  }
 
   void _editItem(BillItem item) async {
     final result = await showModalBottomSheet<_ItemEditResult>(
@@ -145,6 +179,38 @@ class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
                   const SizedBox(height: AppSpacing.md),
                   const DashedLine(),
                   const SizedBox(height: AppSpacing.md),
+                  Row(
+                    children: [
+                      const Text('ADJUSTMENTS', style: AppTypography.eyebrow),
+                      const Spacer(),
+                      TextButton.icon(
+                        onPressed: _editAdjustments,
+                        icon: const Icon(Icons.tune, size: 16),
+                        label: Text(_hasAdjustments ? 'Edit' : 'Add'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: AppColors.accentViolet,
+                          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+                          minimumSize: const Size(0, 32),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  _SummaryRow(label: 'Subtotal', amount: _reviewedSubtotal),
+                  if (_discount > 0)
+                    _SummaryRow(label: 'Discount', amount: -_discount, highlight: true),
+                  if (_tax > 0) _SummaryRow(label: 'Tax', amount: _tax),
+                  if (_serviceCharge > 0) _SummaryRow(label: 'Service', amount: _serviceCharge),
+                  if (!_hasAdjustments)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 4),
+                      child: Text(
+                        'No discount, tax or service charge was found on this receipt.',
+                        style: AppTypography.bodySecondary,
+                      ),
+                    ),
+                  const SizedBox(height: AppSpacing.md),
                   Container(
                     padding: const EdgeInsets.all(AppSpacing.md),
                     decoration: BoxDecoration(
@@ -156,7 +222,7 @@ class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
                         const Text('TOTAL', style: AppTypography.label),
                         const Spacer(),
                         Text(
-                          CurrencyFormatter.format(_reviewedSubtotal),
+                          CurrencyFormatter.format(_reviewedTotal),
                           style: AppTypography.amountLarge.copyWith(fontSize: 20),
                         ),
                       ],
@@ -190,9 +256,10 @@ class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
                           const SizedBox(height: 2),
                           Text(
                             'The receipt printed ${CurrencyFormatter.format(_detectedTotal!)}, but '
-                            'the reviewed items add up to ${CurrencyFormatter.format(_reviewedSubtotal)}. '
-                            'Check the amounts above, or continue if this is expected (e.g. tax/service '
-                            'not itemized separately).',
+                            'the reviewed bill comes to ${CurrencyFormatter.format(_reviewedTotal)}. '
+                            'A missed item, or a discount, tax or service charge that was not picked '
+                            'up, would explain the difference — check the amounts above, or continue '
+                            'if this is expected.',
                             style: const TextStyle(color: AppColors.textAmber),
                           ),
                         ],
@@ -215,6 +282,11 @@ class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
                         receiptPrintedTotal: _detectedTotal,
                       );
                       session.setItemsFromOcr(_items);
+                      session.setScannedAdjustments(
+                        discount: _discount,
+                        tax: _tax,
+                        serviceCharge: _serviceCharge,
+                      );
                       Navigator.of(context).push(
                         MaterialPageRoute(builder: (_) => const PickMembersScreen()),
                       );
@@ -228,6 +300,135 @@ class _ReviewScannedScreenState extends State<ReviewScannedScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// One line of the receipt-style money summary. A negative [amount] is
+/// rendered with its minus sign, so a deduction reads as a deduction.
+class _SummaryRow extends StatelessWidget {
+  const _SummaryRow({required this.label, required this.amount, this.highlight = false});
+
+  final String label;
+  final int amount;
+  final bool highlight;
+
+  @override
+  Widget build(BuildContext context) {
+    final formatted = amount < 0
+        ? '- ${CurrencyFormatter.format(amount.abs())}'
+        : CurrencyFormatter.format(amount);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Expanded(child: Text(label, style: AppTypography.bodySecondary)),
+          Text(
+            formatted,
+            style: AppTypography.amount.copyWith(
+              color: highlight ? AppColors.accentViolet : null,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AdjustmentsResult {
+  const _AdjustmentsResult(this.discount, this.tax, this.serviceCharge);
+  final int discount;
+  final int tax;
+  final int serviceCharge;
+}
+
+/// FR-2.3 applies to more than the item list: a discount or service charge
+/// the scan misread has to be correctable too, or the group is split on a
+/// number nobody can fix.
+class _AdjustmentsSheet extends StatefulWidget {
+  const _AdjustmentsSheet({
+    required this.discount,
+    required this.tax,
+    required this.serviceCharge,
+  });
+
+  final int discount;
+  final int tax;
+  final int serviceCharge;
+
+  @override
+  State<_AdjustmentsSheet> createState() => _AdjustmentsSheetState();
+}
+
+class _AdjustmentsSheetState extends State<_AdjustmentsSheet> {
+  late final TextEditingController _discountController = _controllerFor(widget.discount);
+  late final TextEditingController _taxController = _controllerFor(widget.tax);
+  late final TextEditingController _serviceController = _controllerFor(widget.serviceCharge);
+
+  static TextEditingController _controllerFor(int value) =>
+      TextEditingController(text: value == 0 ? '' : value.toString());
+
+  @override
+  void dispose() {
+    _discountController.dispose();
+    _taxController.dispose();
+    _serviceController.dispose();
+    super.dispose();
+  }
+
+  int _valueOf(TextEditingController controller) =>
+      int.tryParse(controller.text.trim())?.abs() ?? 0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        AppSpacing.lg,
+        AppSpacing.lg,
+        AppSpacing.lg,
+        MediaQuery.of(context).viewInsets.bottom + AppSpacing.lg,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text('Discount, tax & service', style: AppTypography.sectionHeading),
+          const SizedBox(height: AppSpacing.xs),
+          const Text(
+            'Enter tax and service only if the receipt adds them on top of the item '
+            'prices. Leave them empty when the printed prices already include them.',
+            style: AppTypography.bodySecondary,
+          ),
+          const SizedBox(height: AppSpacing.md),
+          TextField(
+            controller: _discountController,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'Discount (Rp)'),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          TextField(
+            controller: _taxController,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'Tax (Rp)'),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          TextField(
+            controller: _serviceController,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'Service charge (Rp)'),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          PrimaryButton(
+            label: 'Save',
+            onPressed: () => Navigator.of(context).pop(_AdjustmentsResult(
+              _valueOf(_discountController),
+              _valueOf(_taxController),
+              _valueOf(_serviceController),
+            )),
+          ),
+        ],
       ),
     );
   }

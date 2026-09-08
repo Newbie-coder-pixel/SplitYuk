@@ -102,9 +102,22 @@ class AiReceiptService {
       final totalRaw = json['detectedTotal'];
       final detectedTotal = totalRaw is num ? totalRaw.round() : null;
 
-      return AiReceiptOutcome(parsed: ParsedReceipt(items: items, detectedTotal: detectedTotal));
+      return AiReceiptOutcome(
+        parsed: ParsedReceipt(
+          items: items,
+          detectedTotal: detectedTotal,
+          discount: _amount(json['discount']),
+          tax: _amount(json['tax']),
+          serviceCharge: _amount(json['serviceCharge']),
+        ),
+      );
     } catch (_) {
       return const AiReceiptOutcome(error: 'Could not reach the AI relay.');
     }
   }
+
+  /// A bill-level adjustment as a non-negative whole Rupiah amount. Read
+  /// as a magnitude, so a discount reported as -50000 still means 50000
+  /// off; which direction it applies is decided by the field it came from.
+  static int _amount(Object? raw) => raw is num ? raw.abs().round() : 0;
 }

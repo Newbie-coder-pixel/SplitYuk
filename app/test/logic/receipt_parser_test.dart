@@ -121,12 +121,50 @@ void main() {
       expect(ReceiptParser.parse(text).detectedTotal, 150000);
     });
 
-    test('a per-item discount line is not counted as an item', () {
+    test('a per-item discount line is captured as a discount, not an item', () {
       const text = 'Kopi Susu               25.000\n'
           '  Diskon Member         -5.000\n'
           'Roti Bakar              22.000';
+      final result = ReceiptParser.parse(text);
 
       expect(itemsOf(text), {'Kopi Susu': 25000, 'Roti Bakar': 22000});
+      expect(result.discount, 5000);
+      expect(result.reconciledTotal, 42000);
+    });
+
+    test('tax and service charged on top are captured as amounts', () {
+      const text = 'Nasi Goreng             50.000\n'
+          'Subtotal                50.000\n'
+          'PPN 11%                  5.500\n'
+          'Service 5%               2.500\n'
+          'Total                   58.000';
+      final result = ReceiptParser.parse(text);
+
+      expect(result.tax, 5500);
+      expect(result.serviceCharge, 2500);
+      expect(result.reconciledTotal, 58000);
+      expect(result.reconciledTotal, result.detectedTotal);
+    });
+
+    test('a tax rate with no money on the line is not read as an amount', () {
+      // "TAX-Excl  9" is a percentage, and on that receipt the printed
+      // prices already include the tax — adding 9 (or 9%) would be wrong.
+      const text = 'Nasi Goreng             50.000\nTAX-Excl                     9\nTotal 50.000';
+      final result = ReceiptParser.parse(text);
+
+      expect(result.tax, 0);
+      expect(result.reconciledTotal, result.detectedTotal);
+    });
+
+    test('multiple discount lines accumulate', () {
+      const text = 'Kopi Susu               25.000\n'
+          'Diskon Member            5.000\n'
+          'Voucher                  2.000\n'
+          'Total                   18.000';
+      final result = ReceiptParser.parse(text);
+
+      expect(result.discount, 7000);
+      expect(result.reconciledTotal, 18000);
     });
 
     test('total written in caps with a colon', () {
@@ -389,6 +427,14 @@ Get in touch with us.
         // (260940) exactly — confirms the parsed amounts are the real ones.
         expect(itemSum, 537600);
         expect(itemSum - 276660, result.detectedTotal);
+
+        // And the parser must reach that reconciliation on its own: the
+        // discount has to be picked up, or every member is billed for the
+        // undiscounted 537.600 and the review screen cries mismatch.
+        expect(result.discount, 276660);
+        expect(result.tax, 0, reason: 'this receipt prints tax-inclusive prices');
+        expect(result.serviceCharge, 0);
+        expect(result.reconciledTotal, result.detectedTotal);
       },
     );
   });

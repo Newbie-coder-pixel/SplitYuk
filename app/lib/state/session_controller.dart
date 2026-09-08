@@ -97,6 +97,31 @@ class SessionController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Applies the bill-level adjustments read off a scanned receipt.
+  ///
+  /// The receipt prints these as money, while [Bill] models tax and
+  /// service as percentages so they can be recomputed after any later
+  /// edit. Converting here (rather than storing a second, redundant set of
+  /// amount fields) keeps [Bill] the single source of truth: its derived
+  /// getters stay consistent if the user edits an item price on a later
+  /// screen. The percentage is taken against the discounted subtotal,
+  /// which is the base the receipt itself charged tax on.
+  ///
+  /// Must be called *after* [setItemsFromOcr] — the conversion needs the
+  /// item subtotal.
+  void setScannedAdjustments({int discount = 0, int tax = 0, int serviceCharge = 0}) {
+    _bill.discount = DiscountConfig(
+      type: DiscountType.amount,
+      value: discount.clamp(0, _bill.subtotal),
+    );
+
+    final taxable = _bill.taxableAmount;
+    _bill.taxPercent = taxable > 0 ? (tax / taxable) * 100 : 0;
+    _bill.servicePercent = taxable > 0 ? (serviceCharge / taxable) * 100 : 0;
+
+    notifyListeners();
+  }
+
   void updateItem(String itemId, {String? name, int? price, int? quantity}) {
     final item = _findItem(itemId);
     if (item == null) return;
