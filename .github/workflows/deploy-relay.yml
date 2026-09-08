@@ -6,7 +6,14 @@ name: Deploy relay to Vercel
 #   VERCEL_TOKEN      - a Vercel API token
 #   VERCEL_ORG_ID     - from server/.vercel/project.json after `vercel link`
 #   VERCEL_PROJECT_ID - from the same file
+#
+# workflow_dispatch is here so the relay can be redeployed from the Actions
+# tab without inventing a commit — needed the first time a deploy failed
+# for a reason outside the code (an expired VERCEL_TOKEN), where there is
+# nothing to change and pushing an empty commit is the only other way to
+# retry.
 on:
+  workflow_dispatch:
   push:
     branches: [main]
 
