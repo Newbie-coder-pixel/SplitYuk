@@ -168,7 +168,53 @@ class _PickMembersScreenState extends State<PickMembersScreen> {
     );
   }
 
+  /// Why the address book can't be opened, and what to do instead.
+  ///
+  /// The old wording — "contacts aren't available on this device" — is
+  /// wrong on the web and actively confusing: the phone obviously *has*
+  /// contacts, so it reads as the app being broken. No browser on iOS can
+  /// reach the address book (the Contact Picker API is Chromium-on-Android
+  /// only), which is a property of the browser, not the device, and the
+  /// user needs to be told the difference plus the two things that do
+  /// work.
+  Widget _buildContactsUnavailable() {
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.bgInput,
+        borderRadius: BorderRadius.circular(AppRadius.small),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            kIsWeb ? Icons.language_outlined : Icons.contacts_outlined,
+            color: AppColors.textSecondary,
+            size: 20,
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(
+              kIsWeb
+                  ? "Browsers can't open your contacts — that's a limit of the browser, "
+                      'not your phone. Start typing a name or number below and your '
+                      'keyboard will offer to fill it in from your contacts. The '
+                      'installed SplitYuk app can pick them directly.'
+                  : "Contacts aren't available on this device. Add everyone manually below.",
+              style: AppTypography.bodySecondary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildContactsSection(SessionController session) {
+    // On the web there is nothing behind the "Choose from contacts" button
+    // but a dead end, so say so up front instead of letting the user tap
+    // it and hit a wall.
+    if (kIsWeb) return _buildContactsUnavailable();
+
     switch (_state) {
       case _ContactsState.notRequested:
         return Container(
@@ -219,17 +265,7 @@ class _PickMembersScreenState extends State<PickMembersScreen> {
           ),
         );
       case _ContactsState.unavailable:
-        return Container(
-          padding: const EdgeInsets.all(AppSpacing.md),
-          decoration: BoxDecoration(
-            color: AppColors.bgInput,
-            borderRadius: BorderRadius.circular(AppRadius.small),
-          ),
-          child: const Text(
-            'Contacts aren\'t available on this device. Add everyone manually below.',
-            style: AppTypography.bodySecondary,
-          ),
-        );
+        return _buildContactsUnavailable();
       case _ContactsState.granted:
         final filtered = _filteredContacts;
         if (filtered.isEmpty) {
@@ -304,19 +340,38 @@ class _PickMembersScreenState extends State<PickMembersScreen> {
             children: [
               Icon(Icons.person_add_alt_outlined, color: AppColors.accentTerracottaDark),
               SizedBox(width: AppSpacing.sm),
-              Text('Add someone not in your contacts', style: AppTypography.label),
+              // Expanded, or this heading runs off the side of a narrow
+              // phone — it is 33 characters next to a fixed-width icon.
+              Expanded(
+                child: Text('Add someone not in your contacts', style: AppTypography.label),
+              ),
             ],
           ),
           const SizedBox(height: AppSpacing.md),
-          TextField(
-            controller: _nameController,
-            decoration: const InputDecoration(labelText: 'Full name'),
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          TextField(
-            controller: _phoneController,
-            keyboardType: TextInputType.phone,
-            decoration: const InputDecoration(labelText: 'WhatsApp / phone number'),
+          // Autofill hints are what let the OS offer a contact above the
+          // keyboard. That matters most on the web build, where the
+          // address book cannot be read at all (see _buildContactsSection)
+          // — this is the only contact shortcut a browser can give, and
+          // without these hints the user has to type every number by hand.
+          AutofillGroup(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextField(
+                  controller: _nameController,
+                  textCapitalization: TextCapitalization.words,
+                  autofillHints: const [AutofillHints.name],
+                  decoration: const InputDecoration(labelText: 'Full name'),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                TextField(
+                  controller: _phoneController,
+                  keyboardType: TextInputType.phone,
+                  autofillHints: const [AutofillHints.telephoneNumber],
+                  decoration: const InputDecoration(labelText: 'WhatsApp / phone number'),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: AppSpacing.md),
           DashedOutlineButton(label: 'Add to list', onPressed: () => _addManualMember(session)),

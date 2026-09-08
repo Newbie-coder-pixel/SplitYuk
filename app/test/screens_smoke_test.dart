@@ -212,6 +212,26 @@ void main() {
     expect(find.text('Total mismatch detected'), findsOneWidget);
   });
 
+  testWidgets('PickMembersScreen offers OS contact autofill on the manual fields',
+      (tester) async {
+    // These hints are the only route to a contact in a browser: no browser
+    // on iOS can read the address book, but the keyboard will offer one
+    // from an input marked with them. Losing them silently turns the web
+    // build into "type every number by hand".
+    await _pump(tester, SessionController(), const PickMembersScreen(),
+        surfaceSize: const Size(390, 3000));
+
+    final fields = tester
+        .widgetList<TextField>(find.byType(TextField))
+        .where((f) => f.autofillHints != null && f.autofillHints!.isNotEmpty)
+        .toList();
+
+    expect(
+      fields.map((f) => f.autofillHints!.first),
+      containsAll(<String>[AutofillHints.name, AutofillHints.telephoneNumber]),
+    );
+  });
+
   testWidgets('ManualEntryScreen builds in both itemized and total-only modes', (tester) async {
     await _pump(tester, SessionController(), const ManualEntryScreen());
     expect(find.text('Line items'), findsOneWidget);
